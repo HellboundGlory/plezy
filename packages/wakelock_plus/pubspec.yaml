@@ -1,22 +1,45 @@
-name: saf_util
-description: "Util functions for SAF (Storage Access Framework)."
-version: 3.1.0
-homepage: https://github.com/flutter-cavalry/saf_util
+# Vendored from fluttercommunity/wakelock_plus at
+# 4f4be85aafe1f8216c2fdd3376263d6f40529684. Local changes are the tvOS
+# deployment target and explicit unawaited wrappers required by the root lint
+# policy. Refresh from the newest upstream release compatible with win32 5.x,
+# reapply both changes, then run pub get and the tvOS pod build.
+name: wakelock_plus
+description: >-2
+  Plugin that allows you to keep the device screen awake, i.e. prevent the screen from sleeping on
+  Android, iOS, macOS, Windows, Linux, and web.
+version: 1.5.2
+repository: https://github.com/fluttercommunity/wakelock_plus/tree/main/wakelock_plus
 
 environment:
-  sdk: ^3.12.0
-  flutter: ">=3.44.0"
+  sdk: '>=3.10.0 <4.0.0'
+  flutter: ">=3.38.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  plugin_platform_interface: ^2.0.2
+  flutter_web_plugins:
+    sdk: flutter
+  meta: ^1.17.0
+  wakelock_plus_platform_interface: ^1.4.0
+
+  # Windows dependencies
+  # win32 is compatible across v5 for Win32 only (not COM)
+  win32: ">=5.6.1 <6.0.0"
+
+  # Linux dependencies
+  dbus: ^0.7.12
+  package_info_plus: ^9.0.0
+
+  # Web dependencies
+  web: ">=0.5.1 <2.0.0"
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  mgenware_dart_lints: ^8.0.0
-
+  flutter_lints: ^6.0.0
+  pigeon: ^26.2.3 # dart run pigeon --input "pigeons/messages.dart"
+  mocktail: ^1.0.4
+  
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -35,8 +58,20 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.fluttercavalry.saf_util
-        pluginClass: SafUtilPlugin
+        package: dev.fluttercommunity.plus.wakelock
+        pluginClass: WakelockPlusPlugin
+      ios:
+        pluginClass: WakelockPlusPlugin
+      windows:
+        dartPluginClass: WakelockPlusWindowsPlugin
+      macos:
+        pluginClass: WakelockPlusMacosPlugin
+        dartPluginClass: WakelockPlusMacOSPlugin
+      linux:
+        dartPluginClass: WakelockPlusLinuxPlugin
+      web:
+        pluginClass: WakelockPlusWebPlugin
+        fileName: src/wakelock_plus_web_plugin.dart
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
@@ -44,10 +79,10 @@ flutter:
   #   - images/a_dot_ham.jpeg
   #
   # For details regarding assets in packages, see
-  # https://flutter.dev/to/asset-from-package
+  # https://flutter.dev/assets-and-images/#from-packages
   #
   # An image asset can refer to one or more resolution-specific "variants", see
-  # https://flutter.dev/to/resolution-aware-images
+  # https://flutter.dev/assets-and-images/#resolution-aware
 
   # To add custom fonts to your plugin package, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a
@@ -67,4 +102,7 @@ flutter:
   #         weight: 700
   #
   # For details regarding fonts in packages, see
-  # https://flutter.dev/to/font-from-package
+  # https://flutter.dev/custom-fonts/#from-packages
+
+  assets:
+    - packages/wakelock_plus/assets/no_sleep.js
