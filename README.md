@@ -1,3 +1,16 @@
+> [!NOTE]
+> **This is a modified version of Plezy.** It is not the official release.
+>
+> This fork adds a native 2D Meta Quest / Horizon OS target and self-updating
+> sideload builds for Quest and Amazon Fire TV. Modified in August 2026 by
+> HellboundGlory. Upstream Plezy lives at
+> <https://github.com/edde746/plezy>; report issues with *this* fork here, not
+> upstream.
+>
+> Plezy is licensed under the GNU General Public License v3.0, and so is this
+> fork. See [LICENSE](LICENSE), and [QUEST_BUILD.md](QUEST_BUILD.md) for what
+> was changed and how to build it.
+
 <h1>
   <img src="assets/plezy.png" alt="Plezy Logo" height="24" style="vertical-align: middle;" />
   Plezy
