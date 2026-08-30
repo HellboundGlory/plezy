@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -794,6 +795,45 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
     _scrollToItem(duration: duration);
   }
 
+  /// Accumulated vertical pointer-scroll distance, in logical pixels.
+  ///
+  /// The rail scrolls programmatically off focus ([_verticalController] with
+  /// [NeverScrollableScrollPhysics]), which is right for a remote but leaves
+  /// pointer-driven TV hosts unable to move between hubs at all. Horizon OS is
+  /// the case in point: a Quest thumbstick or trigger-drag arrives as a
+  /// synthesized mouse wheel (ACTION_SCROLL, SOURCE_MOUSE) in many small
+  /// deltas of ~0.28 wheel clicks, so they are accumulated until they add up to
+  /// one hub move. Routing them through [_moveHub] rather than the scroll
+  /// controller keeps focus, artwork and scroll position in step.
+  ///
+  /// Inert on a real TV, which never emits pointer scroll.
+  double _pointerScrollOffset = 0;
+
+  static const double _pointerScrollPerHub = 40;
+
+  void _handleRailPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final delta = event.scrollDelta.dy;
+    // Horizontal wheel belongs to the hub row under the pointer, which has its
+    // own physics and handles it already.
+    if (delta == 0) return;
+    // A direction change starts a fresh gesture rather than cancelling out.
+    if (!delta.isNegative != !_pointerScrollOffset.isNegative) _pointerScrollOffset = 0;
+    _pointerScrollOffset += delta;
+    while (_pointerScrollOffset.abs() >= _pointerScrollPerHub) {
+      final step = _pointerScrollOffset.isNegative ? -1 : 1;
+      _pointerScrollOffset -= _pointerScrollPerHub * step;
+      final before = _hubIndex;
+      _moveHub(step);
+      // Clamped at the first or last hub: drop the remainder so it cannot
+      // build up and fire a burst when the user scrolls back.
+      if (_hubIndex == before) {
+        _pointerScrollOffset = 0;
+        return;
+      }
+    }
+  }
+
   void _moveHub(int delta) {
     if (widget.hubs.isEmpty) return;
     _hasUserInteracted = true;
@@ -1275,7 +1315,9 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
     required double railViewportWidth,
     required double bottomPadding,
   }) {
-    return ListView.builder(
+    return Listener(
+      onPointerSignal: _handleRailPointerSignal,
+      child: ListView.builder(
       key: const ValueKey('tv_browse_rail_vertical'),
       controller: _verticalController,
       physics: const NeverScrollableScrollPhysics(),
@@ -1328,6 +1370,7 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
           ),
         );
       },
+      ),
     );
   }
 
