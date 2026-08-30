@@ -358,6 +358,23 @@ android {
         abiFilters += listOf("armeabi-v7a", "arm64-v8a")
       }
     }
+
+    // Quest / Horizon OS. Mirrors the AMAZON switch above rather than
+    // introducing product flavors, which would rename every Gradle variant
+    // (assembleRelease -> assembleStandardRelease) and force --flavor onto the
+    // default and Amazon build commands. Horizon runs on arm64 only.
+    if (System.getenv("QUEST") != null) {
+      versionCode = (flutter.versionCode ?: 0) + 4000
+      ndk {
+        // clear() before adding, not `+=`. The Flutter Gradle plugin's
+        // configureAbis() runs at plugin-apply time — before this block — and
+        // does abiFilters.clear(); addAll(PLATFORM_ABI_LIST), so a bare `+=`
+        // unions with armeabi-v7a/arm64-v8a/x86_64 and filters nothing.
+        // Verified: `+=` alone produced a 257 MB three-ABI APK.
+        abiFilters.clear()
+        abiFilters += listOf("arm64-v8a")
+      }
+    }
   }
 
   externalNativeBuild {
@@ -510,6 +527,12 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders"
 }
 
 dependencies {
+  // Quest/Horizon OS manifest overlay (see android/quest). Code-free; it only
+  // contributes panel-window manifest attributes, and only for QUEST=1 builds.
+  if (System.getenv("QUEST") != null) {
+    implementation(project(":quest"))
+  }
+
   implementation(files(File(mpvDir, mpvAar)))
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
