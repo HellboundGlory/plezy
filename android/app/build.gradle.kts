@@ -497,6 +497,7 @@ dependencies {
   if (System.getenv("QUEST") != null || System.getenv("AMAZON") != null) {
     implementation(project(":selfupdate"))
   }
+
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
   // Android TV Watch Next integration
