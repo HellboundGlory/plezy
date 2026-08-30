@@ -148,6 +148,41 @@ EOF
 
 The same keystore signs the Fire TV build, so both targets share one identity.
 
+## Both targets write to the same path
+
+`flutter build apk` always produces
+`build/app/outputs/flutter-apk/app-release.apk`, whichever switch you used — so
+a Fire TV build **silently overwrites** the Quest APK and vice versa. There is
+no per-variant filename because the fork uses env vars rather than product
+flavors (see the end of this file).
+
+Copy each build out as you make it. Finished APKs live outside the repo so
+`flutter clean` cannot delete them:
+
+```bash
+mkdir -p ~/Downloads/Projects/plezy-apks
+
+# Quest
+QUEST=1 flutter build apk --release \
+  --dart-define=QUEST_BUILD=true --target-platform=android-arm64
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-quest-$(git describe --always)-arm64.apk
+
+# Fire TV
+AMAZON=1 flutter build apk --release
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-firetv-$(git describe --always).apk
+```
+
+Check which one you are holding with:
+
+```bash
+aapt2 dump badging <apk> | grep -E "^package|native-code"
+```
+
+`versionCode` disambiguates them: Quest is `+4000` (e.g. 4146), Fire TV `+3000`
+(3146), a plain build `+0` (146).
+
 ## Sideloading with ADB
 
 Developer mode must be enabled for the headset (Meta Horizon phone app →
