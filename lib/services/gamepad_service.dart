@@ -572,15 +572,8 @@ class GamepadService with WindowListener {
         _handleLeftStickY(event.value);
       case GamepadAxis.leftStickX:
         _handleLeftStickX(event.value);
-      // The right stick navigates identically to the left. Quest Touch
-      // controllers report their only thumbstick on the right-stick axes
-      // (AXIS_RX/AXIS_RY), so without this the headset has no stick
-      // navigation at all; on a conventional pad it just means either stick
-      // works, which is what most TV apps do anyway.
-      case GamepadAxis.rightStickY:
-        _handleLeftStickY(event.value);
-      case GamepadAxis.rightStickX:
-        _handleLeftStickX(event.value);
+      default:
+        break;
     }
   }
 
