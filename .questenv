@@ -1,4 +1,7 @@
 export PATH=/home/james/flutter/bin:/home/james/Android/Sdk/platform-tools:$PATH
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+# Android Studio's bundled JBR. Gradle/Flutter select this regardless of a
+# system JAVA_HOME, and /usr/lib/jvm/java-21-openjdk on this machine is the
+# man-pages package only (no bin/), so point at the JBR explicitly.
+export JAVA_HOME=/home/james/Downloads/android-studio/jbr
 export ANDROID_HOME=/home/james/Android/Sdk
 export ANDROID_SDK_ROOT=/home/james/Android/Sdk
