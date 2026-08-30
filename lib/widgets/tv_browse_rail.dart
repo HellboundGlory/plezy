@@ -795,42 +795,96 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
     _scrollToItem(duration: duration);
   }
 
-  /// Accumulated vertical pointer-scroll distance, in logical pixels.
+  /// Accumulated pointer-scroll distance, in logical pixels, per axis.
   ///
-  /// The rail scrolls programmatically off focus ([_verticalController] with
-  /// [NeverScrollableScrollPhysics]), which is right for a remote but leaves
-  /// pointer-driven TV hosts unable to move between hubs at all. Horizon OS is
-  /// the case in point: a Quest thumbstick or trigger-drag arrives as a
-  /// synthesized mouse wheel (ACTION_SCROLL, SOURCE_MOUSE) in many small
-  /// deltas of ~0.28 wheel clicks, so they are accumulated until they add up to
-  /// one hub move. Routing them through [_moveHub] rather than the scroll
-  /// controller keeps focus, artwork and scroll position in step.
+  /// The rail navigates by focus and scrolls programmatically
+  /// ([NeverScrollableScrollPhysics] on both axes), which is right for a remote
+  /// but leaves pointer-driven hosts unable to move at all. Horizon OS is the
+  /// case in point: on a Quest, both the thumbstick and a trigger-drag arrive as
+  /// a synthesized mouse wheel (ACTION_SCROLL, SOURCE_MOUSE) in many small
+  /// deltas of roughly 0.28 wheel clicks.
+  ///
+  /// Routing these through [_moveHub]/[_moveItem] rather than the scroll
+  /// controllers keeps focus, backdrop artwork and scroll position in step, and
+  /// makes the direction explicit instead of inheriting the host's scroll-sign
+  /// convention — Horizon's horizontal sign is the opposite of what pushing the
+  /// stick left should do.
   ///
   /// Inert on a real TV, which never emits pointer scroll.
-  double _pointerScrollOffset = 0;
+  double _pointerScrollX = 0;
+  double _pointerScrollY = 0;
+  DateTime? _lastPointerScrollMove;
 
-  static const double _pointerScrollPerHub = 40;
+  /// Deliberately small: a trigger-drag is a one-shot gesture that accumulates
+  /// far less than a held thumbstick, so a large threshold would make dragging
+  /// feel dead. [_pointerScrollCooldown] is what keeps a held stick from
+  /// racing instead.
+  static const double _pointerScrollPerStep = 14;
+  static const Duration _pointerScrollCooldown = Duration(milliseconds: 110);
 
   void _handleRailPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
-    final delta = event.scrollDelta.dy;
-    // Horizontal wheel belongs to the hub row under the pointer, which has its
-    // own physics and handles it already.
-    if (delta == 0) return;
-    // A direction change starts a fresh gesture rather than cancelling out.
-    if (!delta.isNegative != !_pointerScrollOffset.isNegative) _pointerScrollOffset = 0;
-    _pointerScrollOffset += delta;
-    while (_pointerScrollOffset.abs() >= _pointerScrollPerHub) {
-      final step = _pointerScrollOffset.isNegative ? -1 : 1;
-      _pointerScrollOffset -= _pointerScrollPerHub * step;
-      final before = _hubIndex;
-      _moveHub(step);
-      // Clamped at the first or last hub: drop the remainder so it cannot
-      // build up and fire a burst when the user scrolls back.
-      if (_hubIndex == before) {
-        _pointerScrollOffset = 0;
+    final dx = event.scrollDelta.dx;
+    final dy = event.scrollDelta.dy;
+
+    // One axis per gesture: whichever the host is actually driving.
+    if (dy.abs() >= dx.abs()) {
+      if (dy == 0) return;
+      if (!dy.isNegative != !_pointerScrollY.isNegative) _pointerScrollY = 0;
+      _pointerScrollX = 0;
+      _pointerScrollY += dy;
+      _consumePointerScroll(
+        offset: () => _pointerScrollY,
+        reset: () => _pointerScrollY = 0,
+        subtract: (v) => _pointerScrollY -= v,
+        move: _moveHub,
+        indexOf: () => _hubIndex,
+      );
+    } else {
+      if (dx == 0) return;
+      if (!dx.isNegative != !_pointerScrollX.isNegative) _pointerScrollX = 0;
+      _pointerScrollY = 0;
+      _pointerScrollX += dx;
+      _consumePointerScroll(
+        offset: () => _pointerScrollX,
+        reset: () => _pointerScrollX = 0,
+        subtract: (v) => _pointerScrollX -= v,
+        // Horizon reports a leftward push as a positive horizontal delta, which
+        // would walk the selection right. Negate so pushing left moves left.
+        move: (step) => _moveItem(-step),
+        indexOf: () => _itemIndex,
+      );
+    }
+  }
+
+  void _consumePointerScroll({
+    required double Function() offset,
+    required void Function() reset,
+    required void Function(double) subtract,
+    required void Function(int) move,
+    required int Function() indexOf,
+  }) {
+    while (offset().abs() >= _pointerScrollPerStep) {
+      final now = DateTime.now();
+      final last = _lastPointerScrollMove;
+      if (last != null && now.difference(last) < _pointerScrollCooldown) {
+        // Hold the remainder at one step so a held stick resumes promptly
+        // without banking a burst of moves.
+        final step = offset().isNegative ? -1 : 1;
+        subtract(offset() - _pointerScrollPerStep * step);
         return;
       }
+      final step = offset().isNegative ? -1 : 1;
+      subtract(_pointerScrollPerStep * step);
+      final before = indexOf();
+      move(step);
+      if (indexOf() == before) {
+        // Clamped at an end: drop the remainder so it cannot build up and fire
+        // a burst when the user scrolls back.
+        reset();
+        return;
+      }
+      _lastPointerScrollMove = now;
     }
   }
 
@@ -1574,6 +1628,13 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
       builder: (scrollController) => CustomScrollView(
         controller: scrollController,
         scrollDirection: Axis.horizontal,
+        // Matches the vertical hub list: the rail is focus-driven and scrolls
+        // itself through _moveItem. Leaving the row free-scrolling would let a
+        // pointer wheel slide it independently of the focused card, desyncing
+        // the selection from what is on screen. A real TV sends no pointer
+        // scroll, so this changes nothing there, and the hover arrows still
+        // drive the controller directly.
+        physics: const NeverScrollableScrollPhysics(),
         clipBehavior: Clip.none,
         // The row anchors at its first media item. The leading options card
         // occupies the negative-offset region before the anchor, so at rest it
