@@ -44,7 +44,11 @@ dependencies:
     path: packages/wakelock_plus
   path_provider: ^2.1.0
   path: ^1.9.0
-  universal_gamepad: ^1.5.7
+  universal_gamepad:
+    # Vendored 1.5.8: adds AXIS_RX/AXIS_RY to the Android axis mapping. Meta
+    # Quest Touch controllers report their thumbstick there and never on
+    # AXIS_X/AXIS_Y, so upstream drops the stick entirely on Quest.
+    path: packages/universal_gamepad
   drift: ^2.31.0
   crypto: ^3.0.7
   cryptography: ^2.9.0
