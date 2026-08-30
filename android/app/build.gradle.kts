@@ -355,6 +355,12 @@ android {
     if (System.getenv("AMAZON") != null) {
       versionCode = (flutter.versionCode ?: 0) + 3000
       ndk {
+        // Fork addition: without clear(), this filter is a no-op and Amazon
+        // APKs still ship an x86_64 slice. The Flutter Gradle plugin's
+        // configureAbis() runs at plugin-apply time — before this block — and
+        // does abiFilters.clear(); addAll(PLATFORM_ABI_LIST), so `+=` just
+        // unions back to all three ABIs. Every Fire TV device is ARM.
+        abiFilters.clear()
         abiFilters += listOf("armeabi-v7a", "arm64-v8a")
       }
     }
