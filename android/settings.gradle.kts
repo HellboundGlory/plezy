@@ -28,3 +28,6 @@ include(":libass")
 // Quest/Horizon OS manifest overlay. Configured unconditionally so IDE sync is
 // stable; only actually built when the app depends on it (QUEST=1).
 include(":quest")
+// Sideload self-update permission overlay, shared by the Quest and Fire TV
+// builds. Configured unconditionally; only built when depended on.
+include(":selfupdate")
