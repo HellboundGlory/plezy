@@ -25,3 +25,6 @@ plugins {
 
 include(":app")
 include(":libass")
+// Quest/Horizon OS manifest overlay. Configured unconditionally so IDE sync is
+// stable; only actually built when the app depends on it (QUEST=1).
+include(":quest")
