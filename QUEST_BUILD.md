@@ -148,6 +148,105 @@ EOF
 
 The same keystore signs the Fire TV build, so both targets share one identity.
 
+## Self-updating sideload builds
+
+Both the Quest and Fire TV builds can install their own updates from your
+fork's GitHub Releases. The default (Play Store) and desktop builds are
+untouched — self-updating violates Play policy, and desktop keeps upstream's
+Sparkle path.
+
+### How it works
+
+Plezy's existing `UpdateService` already polls
+`api.github.com/repos/<repo>/releases/latest` on a 6-hour cooldown, with
+skip-this-version support, and shows the update dialog. This fork changes only
+where that dialog's primary button goes: on a sideload build it downloads the
+release asset for this target and hands it to Android's package installer,
+instead of opening the release page in a browser. Everything else — the check,
+the cooldown, the dialog, the Settings entry — is upstream's.
+
+The install needs no native code. `background_downloader` (already a Plezy
+dependency) has `openFile(mimeType:)`, which builds an `ACTION_VIEW` intent with
+a FileProvider `content://` URI and `FLAG_GRANT_READ_URI_PERMISSION`. Verified on
+Quest 3: `com.android.packageinstaller/.InstallStart` resolves exactly that
+intent. `REQUEST_INSTALL_PACKAGES` comes from the `:selfupdate` manifest module.
+The user still confirms each install in the system dialog.
+
+If anything fails — no matching asset, download error, installer refused — it
+silently falls back to upstream's browser behaviour.
+
+### Build flags
+
+```bash
+# Quest
+QUEST=1 flutter build apk --release --target-platform=android-arm64 \
+  --dart-define=QUEST_BUILD=true \
+  --dart-define=ENABLE_UPDATE_CHECK=true \
+  --dart-define=UPDATE_GITHUB_REPO=HellboundGlory/plezy \
+  --dart-define=SELF_UPDATE_TARGET=quest
+
+# Fire TV
+AMAZON=1 flutter build apk --release \
+  --dart-define=ENABLE_UPDATE_CHECK=true \
+  --dart-define=UPDATE_GITHUB_REPO=HellboundGlory/plezy \
+  --dart-define=SELF_UPDATE_TARGET=firetv
+```
+
+Omit `SELF_UPDATE_TARGET` and the build reverts to notify-and-open-browser.
+Omit `ENABLE_UPDATE_CHECK` and it does not check at all.
+
+### Asset naming is the contract
+
+`SelfUpdateTarget.assetMarker` matches a release asset whose filename ends in
+`.apk` and contains `plezy-quest` or `plezy-firetv`. Name the release assets
+accordingly or the app will not find its update:
+
+| Target | Asset filename |
+| --- | --- |
+| Quest | `plezy-quest-<version>-arm64.apk` |
+| Fire TV | `plezy-firetv-<version>.apk` |
+
+### Cutting a release
+
+`UpdateService` compares the release **tag** against the installed
+`versionName`, so tag with the plain version and bump `pubspec.yaml` first.
+`versionCode` must also increase for Android to accept the upgrade — the
+`+4000` / `+3000` offsets are derived from the pubspec build number, so bumping
+it covers both.
+
+```bash
+# 1. bump `version:` in pubspec.yaml, e.g. 2.17.2+147, and commit
+
+# 2. build both targets (see flags above), copying each out
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.2-arm64.apk
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.2.apk
+
+# 3. publish
+gh release create v2.17.2 \
+  ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.2-arm64.apk \
+  ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.2.apk \
+  --title "v2.17.2" --notes "..."
+```
+
+Installed builds pick it up within 6 hours, or immediately via
+**Settings → Check for updates**.
+
+### Signing must not change
+
+An APK signed with a different key cannot upgrade an existing install. Keep
+using `~/.keystores/plezy-quest.jks` for every release, for both targets.
+
+### Licensing note
+
+Plezy is GPL-3.0, which permits distributing binaries as long as the
+corresponding source is available under the same licence and the notices are
+preserved. Publishing the APKs from this public fork satisfies that, since the
+source that built them is the repo they are attached to. The README carries the
+"modified version" notice GPLv3 §5a requires. Do not publish builds from a
+private repo without also making that source available to recipients.
+
 ## Both targets write to the same path
 
 `flutter build apk` always produces

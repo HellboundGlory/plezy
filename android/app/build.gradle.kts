@@ -539,6 +539,13 @@ dependencies {
     implementation(project(":quest"))
   }
 
+  // Sideload self-update permission (see android/selfupdate). Both sideloaded
+  // targets need REQUEST_INSTALL_PACKAGES; the default Play build must not have
+  // it, since self-updating violates Play policy.
+  if (System.getenv("QUEST") != null || System.getenv("AMAZON") != null) {
+    implementation(project(":selfupdate"))
+  }
+
   implementation(files(File(mpvDir, mpvAar)))
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
