@@ -40,7 +40,18 @@ import '../../../i18n/strings.g.dart';
 import 'base_video_control_sheet.dart';
 import 'version_quality_sheet.dart';
 
-enum _SettingsView { menu, speed, zoom, versionQuality, sleep, audioDevice, shader, dvConversion, hdrToneMapping }
+enum _SettingsView {
+  menu,
+  speed,
+  zoom,
+  versionQuality,
+  sleep,
+  audioDevice,
+  shader,
+  dvConversion,
+  hdrToneMapping,
+  threeD,
+}
 
 class _SettingsMenuItem extends StatelessWidget {
   final IconData icon;
@@ -317,11 +328,18 @@ class VideoSettingsSheet extends StatefulWidget {
   /// auto-hide) is read straight off it.
   final TrackControlsState trackControlsState;
 
+  /// Opens straight to the 3D view instead of the menu (PLAN_3D.md Phase 2)
+  /// -- used by the Quest 3D button, which never shows the general settings
+  /// menu on its way in. `_SettingsView` is private to this file, so this is
+  /// a plain flag rather than an exposed initial-view enum value.
+  final bool openToThreeD;
+
   const VideoSettingsSheet({
     super.key,
     required this.player,
     this.supportsHdrControl,
     required this.trackControlsState,
+    this.openToThreeD = false,
   });
 
   @override
@@ -329,10 +347,12 @@ class VideoSettingsSheet extends StatefulWidget {
 }
 
 class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
-  _SettingsView _currentView = _SettingsView.menu;
+  late _SettingsView _currentView;
   late int _audioSyncOffset;
   late int _subtitleSyncOffset;
   late double _zoomScale;
+  late ThreeDMode _threeDMode;
+  late double _threeDStrength;
   String _dvConversionMode = 'auto';
   int _dvConversionWriteGeneration = 0;
   // Linux only, and answered by the native side. Starts false so the toggle
@@ -371,9 +391,15 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
   @override
   void initState() {
     super.initState();
+    _currentView = widget.openToThreeD ? _SettingsView.threeD : _SettingsView.menu;
     _audioSyncOffset = _state.audioSyncOffset;
     _subtitleSyncOffset = _state.subtitleSyncOffset;
     _zoomScale = VideoFilterManager.normalizeZoomScale(_state.videoZoomScale);
+    _threeDMode = ThreeDMode.values[ScopedPlayerPrefs.resolve(
+      ScopedPlayerPrefs.threeDMode,
+      _state.metadata,
+    ).clamp(0, ThreeDMode.values.length - 1)];
+    _threeDStrength = ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDStrength, _state.metadata);
     _hdrToneMapping = SettingsService.instance.read(SettingsService.hdrToneMapping);
     _loadDebugDvConversionMode();
     if (_probesHdrSupport) {
@@ -581,6 +607,8 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
         return t.settings.dvConversionMode;
       case _SettingsView.hdrToneMapping:
         return t.videoSettings.hdrToneMapping;
+      case _SettingsView.threeD:
+        return t.videoSettings.threeD;
     }
   }
 
@@ -604,6 +632,8 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
         return Symbols.hdr_strong_rounded;
       case _SettingsView.hdrToneMapping:
         return Symbols.tonality_rounded;
+      case _SettingsView.threeD:
+        return Symbols.view_in_ar_rounded;
     }
   }
 
@@ -1050,6 +1080,77 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
     );
   }
 
+  String _threeDModeLabel(ThreeDMode mode) => switch (mode) {
+    ThreeDMode.off => t.videoSettings.threeDModeOff,
+    ThreeDMode.auto => t.videoSettings.threeDModeAuto,
+    ThreeDMode.sbs => t.videoSettings.threeDModeSbs,
+    ThreeDMode.ou => t.videoSettings.threeDModeOu,
+  };
+
+  String _formatThreeDStrength(double strength) => '${(strength * 100).round()}%';
+
+  void _setThreeDMode(ThreeDMode mode) {
+    setState(() {
+      _threeDMode = mode;
+    });
+    unawaited(ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, _state.metadata, mode.index));
+  }
+
+  void _previewThreeDStrength(double value) {
+    setState(() {
+      _threeDStrength = value;
+    });
+  }
+
+  void _commitThreeDStrength(double value) {
+    setState(() {
+      _threeDStrength = value;
+    });
+    unawaited(ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDStrength, _state.metadata, value));
+  }
+
+  /// Mode list with checkmarks (modeled on [_buildZoomView]) plus a strength
+  /// slider (modeled on volume_control.dart's `_buildVolumeSlider`) --
+  /// PLAN_3D.md Phase 2 section 2.5.
+  Widget _buildThreeDView() {
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return ListView(
+      shrinkWrap: true,
+      children: [
+        for (final mode in ThreeDMode.values)
+          FocusableListTile(
+            title: Text(_threeDModeLabel(mode), style: TextStyle(color: _threeDMode == mode ? primary : null)),
+            trailing: _threeDMode == mode ? AppIcon(Symbols.check_rounded, fill: 1, color: primary) : null,
+            onTap: () => _setThreeDMode(mode),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Row(
+            mainAxisAlignment: .spaceBetween,
+            children: [
+              Text(t.videoSettings.threeDStrength, style: TextStyle(color: tokens(context).textMuted)),
+              Text(_formatThreeDStrength(_threeDStrength)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Semantics(
+            label: t.videoSettings.threeDStrength,
+            slider: true,
+            child: Slider(
+              value: _threeDStrength,
+              onChanged: _previewThreeDStrength,
+              onChangeEnd: _commitThreeDStrength,
+              activeColor: primary,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSleepView() {
     final sleepTimer = SleepTimerService();
 
@@ -1393,6 +1494,8 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
             return _buildDvConversionView();
           case _SettingsView.hdrToneMapping:
             return _buildHdrToneMappingView();
+          case _SettingsView.threeD:
+            return _buildThreeDView();
         }
       }(),
     );

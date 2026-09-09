@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_item.dart';
 import 'package:plezy/media/media_kind.dart';
+import 'package:plezy/models/shader_preset.dart';
 import 'package:plezy/models/player_setting_scope.dart';
 import 'package:plezy/services/base_shared_preferences_service.dart';
 import 'package:plezy/services/scoped_player_prefs.dart';
@@ -136,6 +137,51 @@ void main() {
       expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.subtitleSyncOffset, episode(id: 'ep-2')), -400);
       expect(settings.read(SettingsService.audioSyncOffset), 0);
       expect(settings.read(SettingsService.subtitleSyncOffset), 0);
+    });
+  });
+
+  group('3D mode and strength', () {
+    test('defaults to per-title scope, unlike every other scoped pref', () {
+      expect(settings.read(SettingsService.threeDModeScope), PlayerSettingScope.title);
+    });
+
+    test('title scope (the default): episodes of one show share a value; other titles fall back to global', () async {
+      await ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, episode(id: 'ep-1'), ThreeDMode.sbs.index);
+      await ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDStrength, episode(id: 'ep-1'), 0.8);
+
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, episode(id: 'ep-2')), ThreeDMode.sbs.index);
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDStrength, episode(id: 'ep-2')), 0.8);
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, episode(series: 'show-2')), ThreeDMode.off.index);
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDStrength, episode(series: 'show-2')), 0.5);
+    });
+
+    test('global scope: one value everywhere', () async {
+      await settings.write(SettingsService.threeDModeScope, PlayerSettingScope.global);
+      await ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, movie(), ThreeDMode.ou.index);
+
+      expect(settings.read(SettingsService.defaultThreeDMode), ThreeDMode.ou.index);
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, movie(id: 'other')), ThreeDMode.ou.index);
+    });
+
+    test('library scope: items in one library share a value; other libraries fall back to global', () async {
+      await settings.write(SettingsService.threeDModeScope, PlayerSettingScope.library);
+      await ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, episode(library: 'vr'), ThreeDMode.auto.index);
+
+      expect(
+        ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, movie(id: 'other', library: 'vr')),
+        ThreeDMode.auto.index,
+      );
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, movie(library: 'flat')), ThreeDMode.off.index);
+    });
+
+    test('off scope: write is a no-op and resolve returns the stored global', () async {
+      await settings.write(SettingsService.defaultThreeDMode, ThreeDMode.sbs.index);
+      await settings.write(SettingsService.threeDModeScope, PlayerSettingScope.off);
+
+      await ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, movie(), ThreeDMode.ou.index);
+
+      expect(settings.read(SettingsService.defaultThreeDMode), ThreeDMode.sbs.index);
+      expect(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, movie()), ThreeDMode.sbs.index);
     });
   });
 

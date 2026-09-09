@@ -2102,6 +2102,9 @@ class Translations$videoControls$en {
 	/// en: 'Ambient lighting'
 	String get ambientLighting => 'Ambient lighting';
 
+	/// en: '3D mode'
+	String get threeDButton => '3D mode';
+
 	/// en: 'Enter fullscreen'
 	String get fullscreenButton => 'Enter fullscreen';
 
@@ -4651,6 +4654,24 @@ class Translations$videoSettings$en {
 
 	/// en: 'Downmix to Stereo'
 	String get audioDownmix => 'Downmix to Stereo';
+
+	/// en: '3D'
+	String get threeD => '3D';
+
+	/// en: 'Off'
+	String get threeDModeOff => 'Off';
+
+	/// en: 'Auto'
+	String get threeDModeAuto => 'Auto';
+
+	/// en: 'Side by Side'
+	String get threeDModeSbs => 'Side by Side';
+
+	/// en: 'Over/Under'
+	String get threeDModeOu => 'Over/Under';
+
+	/// en: 'Depth Strength'
+	String get threeDStrength => 'Depth Strength';
 }
 
 // Path: performanceOverlay
@@ -7689,6 +7710,7 @@ extension on Translations {
 			'videoControls.pipButton' => 'Picture-in-Picture mode',
 			'videoControls.aspectRatioButton' => 'Aspect ratio',
 			'videoControls.ambientLighting' => 'Ambient lighting',
+			'videoControls.threeDButton' => '3D mode',
 			'videoControls.fullscreenButton' => 'Enter fullscreen',
 			'videoControls.exitFullscreenButton' => 'Exit fullscreen',
 			'videoControls.alwaysOnTopButton' => 'Always on top',
@@ -8044,9 +8066,9 @@ extension on Translations {
 			'libraries.noFoldersFound' => 'No folders found',
 			'libraries.folders' => 'folders',
 			'libraries.tabs.recommended' => 'Recommended',
-			'libraries.tabs.browse' => 'Browse',
 			_ => null,
 		} ?? switch (path) {
+			'libraries.tabs.browse' => 'Browse',
 			'libraries.tabs.collections' => 'Collections',
 			'libraries.tabs.playlists' => 'Playlists',
 			'libraries.groupings.title' => 'Grouping',
@@ -8558,9 +8580,9 @@ extension on Translations {
 			'downloads.downloadingTooltip' => 'Downloading...',
 			'downloads.downloadingFilesTooltip' => ({required Object files}) => 'Downloading ${files}',
 			'downloads.noDownloadsTree' => 'No downloads',
-			'downloads.pauseAll' => 'Pause all',
 			_ => null,
 		} ?? switch (path) {
+			'downloads.pauseAll' => 'Pause all',
 			'downloads.resumeAll' => 'Resume all',
 			'downloads.deleteAll' => 'Delete all',
 			'downloads.selectVersion' => 'Select Version',
@@ -8742,6 +8764,12 @@ extension on Translations {
 			'videoSettings.audioOutputStereo' => 'Stereo',
 			'videoSettings.audioNormalization' => 'Normalize Loudness',
 			'videoSettings.audioDownmix' => 'Downmix to Stereo',
+			'videoSettings.threeD' => '3D',
+			'videoSettings.threeDModeOff' => 'Off',
+			'videoSettings.threeDModeAuto' => 'Auto',
+			'videoSettings.threeDModeSbs' => 'Side by Side',
+			'videoSettings.threeDModeOu' => 'Over/Under',
+			'videoSettings.threeDStrength' => 'Depth Strength',
 			'performanceOverlay.color' => 'Color',
 			'performanceOverlay.performance' => 'Performance',
 			'performanceOverlay.buffer' => 'Buffer',

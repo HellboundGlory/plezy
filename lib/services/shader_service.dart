@@ -31,7 +31,14 @@ class ShaderService {
   ///
   /// For NVScaler with auto-HDR skip enabled, will check video colorspace
   /// and skip shader application for HDR content.
-  Future<void> applyPreset(ShaderPreset preset) async {
+  ///
+  /// [threeDConfig] appends the heuristic pseudo-3D SBS shader (PLAN_3D.md
+  /// Phase 2) when its mode isn't [ThreeDMode.off] and [isPassthroughSource]
+  /// is false. Already-3D passthrough content (an explicit sbs/ou choice, or
+  /// auto-detect matching real stereo footage -- see `StereoSourceDetector`)
+  /// skips the shader entirely: it has real parallax already and only needs
+  /// `stereoMode` set on the native theater bridge, not synthesized depth.
+  Future<void> applyPreset(ShaderPreset preset, {ThreeDConfig? threeDConfig, bool isPassthroughSource = false}) async {
     if (!isSupported) {
       appLogger.d('ShaderService: Shaders not supported on ${_player.playerType}');
       return;
@@ -49,7 +56,10 @@ class ShaderService {
         }
       }
 
-      final shaderPaths = await ShaderAssetLoader.getShadersForPreset(preset);
+      final shaderPaths = await ShaderAssetLoader.getShadersForPreset(
+        preset,
+        threeDConfig: isPassthroughSource ? null : threeDConfig,
+      );
 
       if (shaderPaths.isEmpty) {
         // No shaders - clear any existing ones

@@ -86,6 +86,7 @@ import 'widgets/mobile_skip_zones.dart';
 import 'widgets/skip_marker_button.dart';
 import 'widgets/track_chapter_controls.dart';
 import 'widgets/performance_overlay/performance_overlay.dart';
+import 'sheets/video_settings_sheet.dart';
 import '../rasterized_gradient.dart';
 import 'mobile_video_controls.dart';
 import 'desktop_video_controls.dart';

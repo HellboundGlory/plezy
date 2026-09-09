@@ -790,4 +790,266 @@ as bool,
 
 }
 
+
+/// @nodoc
+mixin _$ThreeDConfig {
+
+@JsonKey(unknownEnumValue: ThreeDMode.off) ThreeDMode get mode;/// 0.0-1.0, only meaningful for the synthetic heuristic shader.
+ double get strength;
+/// Create a copy of ThreeDConfig
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$ThreeDConfigCopyWith<ThreeDConfig> get copyWith => _$ThreeDConfigCopyWithImpl<ThreeDConfig>(this as ThreeDConfig, _$identity);
+
+  /// Serializes this ThreeDConfig to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ThreeDConfig&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.strength, strength) || other.strength == strength));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,mode,strength);
+
+@override
+String toString() {
+  return 'ThreeDConfig(mode: $mode, strength: $strength)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $ThreeDConfigCopyWith<$Res>  {
+  factory $ThreeDConfigCopyWith(ThreeDConfig value, $Res Function(ThreeDConfig) _then) = _$ThreeDConfigCopyWithImpl;
+@useResult
+$Res call({
+@JsonKey(unknownEnumValue: ThreeDMode.off) ThreeDMode mode, double strength
+});
+
+
+
+
+}
+/// @nodoc
+class _$ThreeDConfigCopyWithImpl<$Res>
+    implements $ThreeDConfigCopyWith<$Res> {
+  _$ThreeDConfigCopyWithImpl(this._self, this._then);
+
+  final ThreeDConfig _self;
+  final $Res Function(ThreeDConfig) _then;
+
+/// Create a copy of ThreeDConfig
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? mode = null,Object? strength = null,}) {
+  return _then(_self.copyWith(
+mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
+as ThreeDMode,strength: null == strength ? _self.strength : strength // ignore: cast_nullable_to_non_nullable
+as double,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [ThreeDConfig].
+extension ThreeDConfigPatterns on ThreeDConfig {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _ThreeDConfig value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _ThreeDConfig() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _ThreeDConfig value)  $default,){
+final _that = this;
+switch (_that) {
+case _ThreeDConfig():
+return $default(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _ThreeDConfig value)?  $default,){
+final _that = this;
+switch (_that) {
+case _ThreeDConfig() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(unknownEnumValue: ThreeDMode.off)  ThreeDMode mode,  double strength)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _ThreeDConfig() when $default != null:
+return $default(_that.mode,_that.strength);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(unknownEnumValue: ThreeDMode.off)  ThreeDMode mode,  double strength)  $default,) {final _that = this;
+switch (_that) {
+case _ThreeDConfig():
+return $default(_that.mode,_that.strength);}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(unknownEnumValue: ThreeDMode.off)  ThreeDMode mode,  double strength)?  $default,) {final _that = this;
+switch (_that) {
+case _ThreeDConfig() when $default != null:
+return $default(_that.mode,_that.strength);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _ThreeDConfig implements ThreeDConfig {
+  const _ThreeDConfig({@JsonKey(unknownEnumValue: ThreeDMode.off) required this.mode, required this.strength});
+  factory _ThreeDConfig.fromJson(Map<String, dynamic> json) => _$ThreeDConfigFromJson(json);
+
+@override@JsonKey(unknownEnumValue: ThreeDMode.off) final  ThreeDMode mode;
+/// 0.0-1.0, only meaningful for the synthetic heuristic shader.
+@override final  double strength;
+
+/// Create a copy of ThreeDConfig
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$ThreeDConfigCopyWith<_ThreeDConfig> get copyWith => __$ThreeDConfigCopyWithImpl<_ThreeDConfig>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$ThreeDConfigToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ThreeDConfig&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.strength, strength) || other.strength == strength));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode => Object.hash(runtimeType,mode,strength);
+
+@override
+String toString() {
+  return 'ThreeDConfig(mode: $mode, strength: $strength)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$ThreeDConfigCopyWith<$Res> implements $ThreeDConfigCopyWith<$Res> {
+  factory _$ThreeDConfigCopyWith(_ThreeDConfig value, $Res Function(_ThreeDConfig) _then) = __$ThreeDConfigCopyWithImpl;
+@override @useResult
+$Res call({
+@JsonKey(unknownEnumValue: ThreeDMode.off) ThreeDMode mode, double strength
+});
+
+
+
+
+}
+/// @nodoc
+class __$ThreeDConfigCopyWithImpl<$Res>
+    implements _$ThreeDConfigCopyWith<$Res> {
+  __$ThreeDConfigCopyWithImpl(this._self, this._then);
+
+  final _ThreeDConfig _self;
+  final $Res Function(_ThreeDConfig) _then;
+
+/// Create a copy of ThreeDConfig
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? mode = null,Object? strength = null,}) {
+  return _then(_ThreeDConfig(
+mode: null == mode ? _self.mode : mode // ignore: cast_nullable_to_non_nullable
+as ThreeDMode,strength: null == strength ? _self.strength : strength // ignore: cast_nullable_to_non_nullable
+as double,
+  ));
+}
+
+
+}
+
 // dart format on

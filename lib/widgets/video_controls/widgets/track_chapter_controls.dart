@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +7,8 @@ import 'package:flutter/services.dart';
 import '../../../focus/dpad_navigator.dart';
 import '../../../mpv/mpv.dart';
 import '../../../media/media_source_info.dart';
+import '../../../quest/theater3d_bridge.dart';
+import '../../../services/fullscreen_state_manager.dart';
 import '../../../services/sleep_timer_service.dart';
 import '../../../utils/platform_detector.dart';
 import '../../../utils/quality_preset_labels.dart';
@@ -353,20 +357,50 @@ class TrackChapterControls extends StatelessWidget {
           buttonIndex++;
         }
 
-        // Fullscreen button (desktop only)
+        // Fullscreen button (desktop only). Reads FullscreenStateManager
+        // directly rather than through TrackControlsState: PLAN_3D.md Phase 2
+        // repurposed the state's isFullscreen/onToggleFullscreen fields for
+        // the Quest 3D button below, and the two buttons are mutually
+        // exclusive per platform (desktop vs. Quest), so they were never
+        // rendered together anyway.
         if (isDesktop) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            ListenableBuilder(
+              listenable: FullscreenStateManager(),
+              builder: (context, _) {
+                final isFullscreen = FullscreenStateManager().isFullscreen;
+                return _buildTrackButton(
+                  buttonIndex: currentIndex,
+                  icon: isFullscreen ? Symbols.fullscreen_exit_rounded : Symbols.fullscreen_rounded,
+                  tooltip: isFullscreen ? t.videoControls.exitFullscreenButton : t.videoControls.fullscreenButton,
+                  semanticLabel: isFullscreen
+                      ? t.videoControls.exitFullscreenButton
+                      : t.videoControls.fullscreenButton,
+                  checked: isFullscreen,
+                  buttons: buttons,
+                  onPressed: () => unawaited(FullscreenStateManager().toggleFullscreen()),
+                );
+              },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // 3D button (Quest theater mode only, PLAN_3D.md Phase 2). Never
+        // rendered together with the desktop fullscreen button above.
+        if (Theater3DBridge.isAvailable) {
           final currentIndex = buttonIndex;
           buttons.add(
             _buildTrackButton(
               buttonIndex: currentIndex,
-              icon: state.isFullscreen ? Symbols.fullscreen_exit_rounded : Symbols.fullscreen_rounded,
-              tooltip: state.isFullscreen ? t.videoControls.exitFullscreenButton : t.videoControls.fullscreenButton,
-              semanticLabel: state.isFullscreen
-                  ? t.videoControls.exitFullscreenButton
-                  : t.videoControls.fullscreenButton,
-              checked: state.isFullscreen,
+              icon: Symbols.view_in_ar_rounded,
+              tooltip: t.videoControls.threeDButton,
+              semanticLabel: t.videoControls.threeDButton,
+              isActive: state.is3DActive,
+              checked: state.is3DActive,
               buttons: buttons,
-              onPressed: state.onToggleFullscreen,
+              onPressed: state.onOpen3DMenu,
             ),
           );
         }

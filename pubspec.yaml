@@ -150,5 +150,6 @@ flutter:
     - assets/shaders/nvscaler/
     - assets/shaders/artcnn/
     - assets/shaders/anime4k/
+    - assets/shaders/pseudo3d/
     - assets/player_icons/
     - assets/rating_icons/

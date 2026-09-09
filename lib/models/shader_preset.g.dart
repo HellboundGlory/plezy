@@ -76,3 +76,26 @@ _NVScalerConfig _$NVScalerConfigFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$NVScalerConfigToJson(_NVScalerConfig instance) =>
     <String, dynamic>{'autoHdrSkip': instance.autoHdrSkip};
+
+_ThreeDConfig _$ThreeDConfigFromJson(Map<String, dynamic> json) =>
+    _ThreeDConfig(
+      mode: $enumDecode(
+        _$ThreeDModeEnumMap,
+        json['mode'],
+        unknownValue: ThreeDMode.off,
+      ),
+      strength: (json['strength'] as num).toDouble(),
+    );
+
+Map<String, dynamic> _$ThreeDConfigToJson(_ThreeDConfig instance) =>
+    <String, dynamic>{
+      'mode': _$ThreeDModeEnumMap[instance.mode]!,
+      'strength': instance.strength,
+    };
+
+const _$ThreeDModeEnumMap = {
+  ThreeDMode.off: 'off',
+  ThreeDMode.auto: 'auto',
+  ThreeDMode.sbs: 'sbs',
+  ThreeDMode.ou: 'ou',
+};

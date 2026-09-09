@@ -53,4 +53,21 @@ void main() {
       expect(decoded.artcnnConfig, preset.artcnnConfig);
     });
   });
+
+  group('ThreeDConfig', () {
+    test('round-trips mode and strength through json', () {
+      const config = ThreeDConfig(mode: ThreeDMode.sbs, strength: 0.75);
+      final decoded = ThreeDConfig.fromJson(config.toJson());
+
+      expect(decoded, config);
+      expect(decoded.mode, ThreeDMode.sbs);
+      expect(decoded.strength, 0.75);
+    });
+
+    test('falls back to off for an unrecognized stored mode', () {
+      final decoded = ThreeDConfig.fromJson({'mode': 'holographic', 'strength': 0.5});
+
+      expect(decoded.mode, ThreeDMode.off);
+    });
+  });
 }

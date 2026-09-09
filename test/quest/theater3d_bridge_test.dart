@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/quest/quest_platform.dart';
 import 'package:plezy/quest/theater3d_bridge.dart';
 
 const _methodChannelName = 'com.edde746.plezy/theater3d';
@@ -22,6 +23,24 @@ void main() {
     await done.future;
     await Future<void>.delayed(Duration.zero);
   }
+
+  group('Theater3DBridge.isAvailable', () {
+    tearDown(() => QuestPlatform.debugSetIsQuest(null));
+
+    test('is false when the device is not a Quest', () {
+      QuestPlatform.debugSetIsQuest(false);
+      expect(Theater3DBridge.isAvailable, isFalse);
+    });
+
+    test('still requires the THEATER_MODE_BUILD dart-define even on a detected Quest device', () {
+      QuestPlatform.debugSetIsQuest(true);
+      // This test binary is not compiled with --dart-define=THEATER_MODE_BUILD=true,
+      // so kTheaterModeBuild const-folds false and isAvailable must stay false too
+      // -- it is an AND of both signals, not isQuest alone.
+      expect(kTheaterModeBuild, isFalse);
+      expect(Theater3DBridge.isAvailable, isFalse);
+    });
+  });
 
   test('open sends every field the native StereoModeResolver/loadfile path needs', () async {
     MethodCall? call;

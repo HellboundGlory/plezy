@@ -152,6 +152,36 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
 
   void _previousChapter() => _seekToPreviousChapter();
 
+  /// Reads the persisted 3D config fresh on every access -- there is no live
+  /// provider for it (unlike shaders/ambient lighting), so this mirrors how
+  /// [_dvConversionMode] is loaded on demand rather than cached in a field.
+  ThreeDConfig get _threeDConfig => ThreeDConfig(
+    mode: ThreeDMode.values[ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDMode, widget.metadata).clamp(
+      0,
+      ThreeDMode.values.length - 1,
+    )],
+    strength: ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.threeDStrength, widget.metadata),
+  );
+
+  /// Opens the settings sheet straight to the 3D view (PLAN_3D.md Phase 2) --
+  /// mirrors `_buildTrackButton`'s settings-icon `onPressed` in
+  /// track_chapter_controls.dart, but built here since [TrackControlsState]
+  /// carries [onOpen3DMenu] as a plain callback rather than an inline builder.
+  void _openThreeDMenu() {
+    final playbackState = context.read<PlaybackStateProvider>();
+    final trackControlsState = _buildTrackControlsState(
+      playbackState: playbackState,
+      onToggleAlwaysOnTop: _toggleAlwaysOnTop,
+    );
+    widget.chromeController.cancelAutoHide();
+    OverlaySheetController.of(context)
+        .show(
+          builder: (_) =>
+              VideoSettingsSheet(player: widget.player, trackControlsState: trackControlsState, openToThreeD: true),
+        )
+        .whenComplete(_startHideTimer);
+  }
+
   TrackControlsState _buildTrackControlsState({
     required PlaybackStateProvider playbackState,
     required VoidCallback? onToggleAlwaysOnTop,
@@ -190,7 +220,7 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       audioSyncOffset: _audioSyncOffset,
       subtitleSyncOffset: _subtitleSyncOffset,
       isRotationLocked: _isRotationLocked,
-      isFullscreen: _isFullscreen,
+      is3DActive: _threeDConfig.mode != ThreeDMode.off,
       isAlwaysOnTop: _isAlwaysOnTop,
       onTogglePIPMode: (_isPipSupported && !PlatformDetector.isTV()) ? widget.onTogglePIPMode : null,
       onCycleBoxFitMode: widget.onCycleBoxFitMode,
@@ -198,7 +228,7 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       onResetVideoZoom: widget.onResetVideoZoom,
       onToggleRotationLock: _toggleRotationLock,
       onToggleScreenLock: _toggleScreenLock,
-      onToggleFullscreen: _toggleFullscreen,
+      onOpen3DMenu: _openThreeDMenu,
       onToggleAlwaysOnTop: onToggleAlwaysOnTop,
       onSwitchVersion: versionQuality.canSwitch ? (i) => _switchVersionAndQuality(newMediaIndex: i) : null,
       onSwitchQualityPreset: versionQuality.canSwitch ? (p) => _switchVersionAndQuality(newPreset: p) : null,

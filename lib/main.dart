@@ -36,6 +36,7 @@ import 'services/storage_service.dart';
 import 'services/assistive_technology_service.dart';
 import 'services/device_performance.dart';
 import 'services/video_decode_capabilities.dart';
+import 'quest/quest_platform.dart';
 import 'services/macos_window_service.dart';
 import 'services/native_window_service.dart';
 import 'services/fullscreen_state_manager.dart';
@@ -920,11 +921,16 @@ Future<_StartupDependencies> _initializeStartup(SettingsService settings) async 
     // MainApp reads the first two synchronous facades during its first build
     // and the Jellyfin device profile the third at playback negotiation. All
     // three have a working sync fallback, so a detection failure is not fatal.
+    // QuestPlatform gates the Quest 3D button (PLAN_3D.md Phase 2) the same
+    // way -- QuestPlatform.isQuest answers false until this resolves, which
+    // is the correct pre-init default (no Quest-only surface can mount this
+    // early).
     await _optionalGatePhase(StartupPhase.deviceCapabilities, () async {
       await (
         TvDetectionService.getInstance(forceTv: settings.read(SettingsService.forceTvMode)),
         DevicePerformance.getInstance(override: settings.read(SettingsService.visualEffects)),
         VideoDecodeCapabilities.getInstance(),
+        QuestPlatform.ensureInitialized(),
       ).wait;
     });
 

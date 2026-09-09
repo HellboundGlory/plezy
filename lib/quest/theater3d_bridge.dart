@@ -13,6 +13,18 @@
 
 import 'package:flutter/services.dart';
 
+import 'quest_platform.dart';
+
+/// Build-time marker set by the Quest theater-mode build command:
+/// `--dart-define=THEATER_MODE_BUILD=true`, alongside `THEATER_MODE=1` (the
+/// Kotlin-side gate for android/app/build.gradle.kts's `:theater3d` source
+/// set). Dart cannot probe whether the platform channel actually exists
+/// without invoking it, so this mirrors [kQuestBuild]'s advisory
+/// `bool.fromEnvironment` idiom instead: real builds pass both flags
+/// together (see QUEST_BUILD.md), so this const-folds true exactly when the
+/// native channel is really compiled in.
+const bool kTheaterModeBuild = bool.fromEnvironment('THEATER_MODE_BUILD');
+
 /// Selected 3D playback mode for [Theater3DBridge.open]'s `stereoMode`
 /// payload. Mirrors the native `StereoModeResolver` mapping exactly (see
 /// PLAN_3D.md 1.5): `off`/`sbs`/`ou` are content already mastered as
@@ -77,6 +89,15 @@ class Theater3DBridge {
 
   static const _methodChannelName = 'com.edde746.plezy/theater3d';
   static const _eventChannelName = 'com.edde746.plezy/theater3d/events';
+
+  /// Whether theater mode can plausibly be entered here: a Horizon OS
+  /// headset (see [QuestPlatform.isQuest]) running a build compiled with
+  /// [kTheaterModeBuild]. Gates the player's 3D button's very existence
+  /// (see track_chapter_controls.dart) -- like both inputs it is advisory,
+  /// not a confirmation the platform channel is actually registered, so a
+  /// false positive still fails safely through [open]'s
+  /// [MissingPluginException] path.
+  static bool get isAvailable => QuestPlatform.isQuest && kTheaterModeBuild;
 
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;

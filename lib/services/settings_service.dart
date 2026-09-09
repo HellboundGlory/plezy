@@ -724,6 +724,16 @@ class SettingsService extends BaseSharedPreferencesService {
   );
   static final defaultBoxFitMode = IntPref('default_box_fit_mode', transform: (v) => v.clamp(0, 2));
 
+  // ThreeDMode.values is {off, auto, sbs, ou} -- not imported here to avoid a
+  // dependency on shader_preset.dart purely for this clamp, same as
+  // defaultBoxFitMode above.
+  static final defaultThreeDMode = IntPref('default_three_d_mode', transform: (v) => v.clamp(0, 3));
+  static final defaultThreeDStrength = DoublePref(
+    'default_three_d_strength',
+    defaultValue: 0.5,
+    transform: (v) => v.clamp(0.0, 1.0),
+  );
+
   // Where a change made in the player's settings sheet persists (see
   // [PlayerSettingScope]). Defaults preserve the pre-existing behavior:
   // every change updates the global default.
@@ -741,6 +751,15 @@ class SettingsService extends BaseSharedPreferencesService {
     'box_fit_scope',
     values: PlayerSettingScope.values,
     defaultValue: PlayerSettingScope.global,
+  );
+
+  /// Defaults to per-title, unlike every other scope above: a nature
+  /// documentary and a screen recording want different default 3D modes
+  /// (PLAN_3D.md Phase 2 open decision #2).
+  static const threeDModeScope = EnumPref<PlayerSettingScope>(
+    'three_d_mode_scope',
+    values: PlayerSettingScope.values,
+    defaultValue: PlayerSettingScope.title,
   );
 
   /// One scope for both sync offsets: they are tuned together and a user who
@@ -1238,9 +1257,12 @@ class SettingsService extends BaseSharedPreferencesService {
     subtitleAnchorToScreen,
     defaultPlaybackSpeed,
     defaultBoxFitMode,
+    defaultThreeDMode,
+    defaultThreeDStrength,
     playbackSpeedScope,
     shaderPresetScope,
     boxFitScope,
+    threeDModeScope,
     syncOffsetScope,
     scopedPlayerPrefValues,
     themeMode,

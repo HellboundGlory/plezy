@@ -711,6 +711,7 @@
     "pipButton": "Picture-in-Picture mode",
     "aspectRatioButton": "Aspect ratio",
     "ambientLighting": "Ambient lighting",
+    "threeDButton": "3D mode",
     "fullscreenButton": "Enter fullscreen",
     "exitFullscreenButton": "Exit fullscreen",
     "alwaysOnTopButton": "Always on top",
@@ -1896,7 +1897,13 @@
     "audioOutputSpatial": "Spatial Audio",
     "audioOutputStereo": "Stereo",
     "audioNormalization": "Normalize Loudness",
-    "audioDownmix": "Downmix to Stereo"
+    "audioDownmix": "Downmix to Stereo",
+    "threeD": "3D",
+    "threeDModeOff": "Off",
+    "threeDModeAuto": "Auto",
+    "threeDModeSbs": "Side by Side",
+    "threeDModeOu": "Over/Under",
+    "threeDStrength": "Depth Strength"
   },
   "performanceOverlay": {
     "color": "Color",

@@ -105,6 +105,25 @@ sealed class NVScalerConfig with _$NVScalerConfig {
   factory NVScalerConfig.fromJson(Map<String, dynamic> json) => _$NVScalerConfigFromJson(json);
 }
 
+/// Selected 3D playback mode -- see PLAN_3D.md Phase 2. Mirrors
+/// `TheaterStereoMode`'s off/sbs/ou wire values 1:1; [auto] is Dart-only and
+/// is resolved to a concrete passthrough/synthetic decision by
+/// `StereoSourceDetector` before it ever reaches `ShaderService.applyPreset`
+/// or the native theater bridge.
+enum ThreeDMode { off, auto, sbs, ou }
+
+@freezed
+sealed class ThreeDConfig with _$ThreeDConfig {
+  const factory ThreeDConfig({
+    @JsonKey(unknownEnumValue: ThreeDMode.off) required ThreeDMode mode,
+
+    /// 0.0-1.0, only meaningful for the synthetic heuristic shader.
+    required double strength,
+  }) = _ThreeDConfig;
+
+  factory ThreeDConfig.fromJson(Map<String, dynamic> json) => _$ThreeDConfigFromJson(json);
+}
+
 class ShaderPreset {
   final String id;
   final String name;

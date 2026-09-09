@@ -136,6 +136,51 @@ void main() {
     }
   });
 
+  test('materializes the pseudo-3D shader with bundled bytes', () async {
+    final shaders = await ShaderAssetLoader.getPseudo3DShaders();
+
+    expect(shaders, hasLength(1));
+    await expectBundledFile(shaders.single, 'pseudo3d/Pseudo3DSbs.glsl');
+  });
+
+  test('getShadersForPreset appends the pseudo-3D shader after the preset when a synthetic 3D config is given', () async {
+    final shaders = await ShaderAssetLoader.getShadersForPreset(
+      ShaderPreset.nvscalerDefault,
+      threeDConfig: const ThreeDConfig(mode: ThreeDMode.auto, strength: 0.5),
+    );
+
+    expect(shaders, hasLength(2));
+    await expectBundledFile(shaders[0], 'nvscaler/NVScaler.glsl');
+    await expectBundledFile(shaders[1], 'pseudo3d/Pseudo3DSbs.glsl');
+  });
+
+  test('getShadersForPreset appends the pseudo-3D shader even when the base preset is none', () async {
+    final shaders = await ShaderAssetLoader.getShadersForPreset(
+      ShaderPreset.none,
+      threeDConfig: const ThreeDConfig(mode: ThreeDMode.sbs, strength: 0.5),
+    );
+
+    expect(shaders, hasLength(1));
+    await expectBundledFile(shaders.single, 'pseudo3d/Pseudo3DSbs.glsl');
+  });
+
+  test('getShadersForPreset omits the pseudo-3D shader when the 3D mode is off', () async {
+    final shaders = await ShaderAssetLoader.getShadersForPreset(
+      ShaderPreset.nvscalerDefault,
+      threeDConfig: const ThreeDConfig(mode: ThreeDMode.off, strength: 0.5),
+    );
+
+    expect(shaders, hasLength(1));
+    await expectBundledFile(shaders.single, 'nvscaler/NVScaler.glsl');
+  });
+
+  test('getShadersForPreset omits the pseudo-3D shader when no 3D config is given', () async {
+    final shaders = await ShaderAssetLoader.getShadersForPreset(ShaderPreset.nvscalerDefault);
+
+    expect(shaders, hasLength(1));
+    await expectBundledFile(shaders.single, 'nvscaler/NVScaler.glsl');
+  });
+
   test('repeats the restore pass in place for doubled Anime4K modes', () async {
     final shaders = await ShaderAssetLoader.getAnime4KShaders(
       const Anime4KConfig(quality: Anime4KQuality.fast, mode: Anime4KMode.modeBB),

@@ -694,6 +694,7 @@ only the build-time mechanics.
 source .questenv
 THEATER_MODE=1 QUEST=1 flutter build apk --release \
   --dart-define=QUEST_BUILD=true \
+  --dart-define=THEATER_MODE_BUILD=true \
   --target-platform=android-arm64
 ```
 
@@ -701,6 +702,16 @@ THEATER_MODE=1 QUEST=1 flutter build apk --release \
 `android/theater3d`'s own manifest carries everything `Theater3DActivity`
 needs — but has no reason to ship that way: theater mode is Quest-only,
 so every real build passes both flags together.
+
+Note the two `THEATER_MODE` knobs are separate and both required:
+`THEATER_MODE=1` (shell env var) gates the native Gradle module
+(`android/settings.gradle.kts`'s `:theater3d` include and
+`android/app/build.gradle.kts`'s conditional dependency), while
+`--dart-define=THEATER_MODE_BUILD=true` gates the Dart-side
+`Theater3DBridge.isAvailable` check that shows the player's 3D button.
+Omitting the dart-define on an otherwise `THEATER_MODE=1` build compiles
+fine but silently hides the button — the native module is present, the
+Dart UI just never offers it.
 
 **Status as of PLAN_3D.md Phase 1:** the native Spatial SDK panel, the
 headless second `MpvPlayerCore` that decodes into it, and the
@@ -719,6 +730,25 @@ the `SecurityException` it raises). Full playback-path verification (open
 → real per-eye stereo → exit → resume the flat player) needs Phase 2's
 button, since the panel is only ever reached through the app's own
 `Theater3DBridge.launch()` call, never an external intent.
+
+**Status as of PLAN_3D.md Phase 2:** the player-UI trigger is now wired
+up in Dart — `track_chapter_controls.dart`'s fullscreen button is replaced
+by a `Symbols.view_in_ar_rounded` 3D button on `Theater3DBridge.isAvailable`
+builds (desktop fullscreen is untouched, now driven directly by
+`FullscreenStateManager` instead of routing through `TrackControlsState`),
+opening a new 3D view in `VideoSettingsSheet` (mode: off/auto/sbs/ou,
+plus a strength slider), backed by `ThreeDConfig`/`ThreeDMode`
+(`lib/models/shader_preset.dart`), per-title-scoped prefs
+(`ScopedPlayerPrefs.threeDMode`/`.threeDStrength`), a heuristic
+depth+parallax GLSL shader (`assets/shaders/pseudo3d/Pseudo3DSbs.glsl`,
+applied via `shader_service.dart`), and filename/aspect-ratio auto-detect
+(`lib/utils/stereo_source_detector.dart`). `Theater3DBridge.isAvailable`
+requires **both** `THEATER_MODE=1` (native module) and
+`--dart-define=THEATER_MODE_BUILD=true` (Dart gate) at build time — see
+the note above. Unit-tested (Dart); **not yet verified on-device** — the
+full open → real per-eye stereo → exit → resume path via the new button
+still needs an actual Quest 3 pass, since Phase 1's device verification
+predates this trigger existing.
 
 ## Known considerations
 

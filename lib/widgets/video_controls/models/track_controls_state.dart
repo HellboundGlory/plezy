@@ -35,7 +35,13 @@ class TrackControlsState {
   final int audioSyncOffset;
   final int subtitleSyncOffset;
   final bool isRotationLocked;
-  final bool isFullscreen;
+
+  /// Whether the Quest 3D config is anything but off (see PLAN_3D.md Phase
+  /// 2). Desktop's own fullscreen concept is unrelated and no longer routed
+  /// through this state -- track_chapter_controls.dart's fullscreen button
+  /// reads `FullscreenStateManager()` directly, since the two buttons are
+  /// mutually exclusive per platform and were never rendered together.
+  final bool is3DActive;
   final bool isAlwaysOnTop;
   final VoidCallback? onTogglePIPMode;
   final VoidCallback? onCycleBoxFitMode;
@@ -43,7 +49,10 @@ class TrackControlsState {
   final VoidCallback? onResetVideoZoom;
   final VoidCallback? onToggleRotationLock;
   final VoidCallback? onToggleScreenLock;
-  final VoidCallback? onToggleFullscreen;
+
+  /// Opens the Quest 3D settings view (see PLAN_3D.md Phase 2). Null when
+  /// theater mode isn't available on this build/device.
+  final VoidCallback? onOpen3DMenu;
   final VoidCallback? onToggleAlwaysOnTop;
   final Function(int)? onSwitchVersion;
   final ValueChanged<TranscodeQualityPreset>? onSwitchQualityPreset;
@@ -103,7 +112,7 @@ class TrackControlsState {
     this.audioSyncOffset = 0,
     this.subtitleSyncOffset = 0,
     this.isRotationLocked = false,
-    this.isFullscreen = false,
+    this.is3DActive = false,
     this.isAlwaysOnTop = false,
     this.onTogglePIPMode,
     this.onCycleBoxFitMode,
@@ -111,7 +120,7 @@ class TrackControlsState {
     this.onResetVideoZoom,
     this.onToggleRotationLock,
     this.onToggleScreenLock,
-    this.onToggleFullscreen,
+    this.onOpen3DMenu,
     this.onToggleAlwaysOnTop,
     this.onSwitchVersion,
     this.onSwitchQualityPreset,

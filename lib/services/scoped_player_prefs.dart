@@ -61,6 +61,20 @@ abstract final class ScopedPlayerPrefs {
     _decodeBoxFit,
   );
 
+  static final threeDMode = ScopedPlayerPref<int>._(
+    'three_d_mode',
+    SettingsService.threeDModeScope,
+    SettingsService.defaultThreeDMode,
+    _decodeThreeDMode,
+  );
+
+  static final threeDStrength = ScopedPlayerPref<double>._(
+    'three_d_strength',
+    SettingsService.threeDModeScope,
+    SettingsService.defaultThreeDStrength,
+    _decodeThreeDStrength,
+  );
+
   static final audioSyncOffset = ScopedPlayerPref<int>._(
     'audio_sync_offset',
     SettingsService.syncOffsetScope,
@@ -152,6 +166,12 @@ abstract final class ScopedPlayerPrefs {
   static int? _decodeInt(Object? raw) => raw is int ? raw : null;
 
   static int? _decodeBoxFit(Object? raw) => raw is int ? raw.clamp(0, 2) : null;
+
+  // ThreeDMode.values is {off, auto, sbs, ou}; not imported here for the same
+  // reason SettingsService.defaultThreeDMode hardcodes its clamp range.
+  static int? _decodeThreeDMode(Object? raw) => raw is int ? raw.clamp(0, 3) : null;
+
+  static double? _decodeThreeDStrength(Object? raw) => raw is num ? raw.toDouble().clamp(0.0, 1.0) : null;
 
   static String? _decodeString(Object? raw) => raw is String ? raw : null;
 }
