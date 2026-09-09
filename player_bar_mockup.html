@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plezy Quest — Player Control Bar Mockup (3D Mode)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,700,1,0&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  /* ---- Plezy "Mono" theme tokens, copied 1:1 from lib/theme/mono_theme.dart / mono_tokens.dart ---- */
+  :root{
+    --bg:#0E0F12; --surface:#15171C; --outline:rgba(255,255,255,0.12);
+    --text:#EDEDED; --text-muted:rgba(237,237,237,0.6);
+    --amber:#FFC107; /* Colors.amber */
+    --radius-sm:8px; --radius-md:12px; --radius-lg:20px; --radius-xs:5px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#05060a;color:var(--text);font-family:'Inter',-apple-system,'Roboto',Arial,sans-serif}
+  .msr{font-family:'Material Symbols Rounded';font-weight:700;font-variation-settings:'FILL' 1,'wght' 700,'GRAD' 0,'opsz' 24;line-height:1;display:inline-block;vertical-align:middle}
+
+  .page{max-width:960px;margin:0 auto;padding:40px 24px 100px}
+  .meta{margin-bottom:28px}
+  .meta .kicker{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8b93a5;font-weight:600}
+  .meta h1{font-size:22px;margin:6px 0 8px;color:#f2f4f8;font-weight:700;letter-spacing:-.01em}
+  .meta p{font-size:13.5px;color:#8b93a5;max-width:640px;margin:0;line-height:1.6}
+  .meta code{font-family:ui-monospace,Menlo,monospace;background:rgba(124,159,255,.1);color:#a9c1ff;padding:1px 6px;border-radius:4px;font-size:12px}
+
+  .stagelabel{font-size:11px;color:#8b93a5;text-transform:uppercase;letter-spacing:.07em;margin:36px 0 12px;display:flex;align-items:center;gap:10px}
+  .stagelabel::after{content:"";flex:1;height:1px;background:#1c2230}
+
+  /* ---- Simulated Quest player panel ---- */
+  .stage{
+    position:relative;border-radius:18px;overflow:hidden;
+    aspect-ratio:16/9.3;
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 82%, rgba(0,0,0,.82) 100%),
+      linear-gradient(180deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 18%),
+      linear-gradient(125deg,#3a3f4d 0%,#1c2029 38%,#0c0e13 75%);
+    box-shadow:0 30px 80px rgba(0,0,0,.55), 0 0 0 1px #1a1e28;
+  }
+  .stage .filmgrain{position:absolute;inset:0;opacity:.05;background-image:radial-gradient(circle,#fff 1px,transparent 1px);background-size:3px 3px;pointer-events:none}
+
+  /* top bar: back + title */
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:12px;padding:16px 20px;color:#fff}
+  .topbar .back{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center}
+  .topbar .titles{display:flex;flex-direction:column;gap:1px}
+  .topbar .titles .t1{font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+  .topbar .titles .t2{font-size:11.5px;color:rgba(255,255,255,.55)}
+
+  /* bottom control bar */
+  .controlbar{position:absolute;left:0;right:0;bottom:0;padding:6px 20px 16px}
+  .scrub{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+  .scrub .time{font-size:11px;color:rgba(255,255,255,.7);font-variant-numeric:tabular-nums;width:40px}
+  .scrub .time.dur{text-align:right}
+  .scrub .track{flex:1;height:16px;position:relative;display:flex;align-items:center}
+  .scrub .track .rail{position:absolute;left:0;right:0;height:4px;border-radius:99px;background:rgba(255,255,255,.18)}
+  .scrub .track .fill{position:absolute;left:0;width:34%;height:4px;border-radius:99px;background:#fff}
+  .scrub .track .gap{position:absolute;left:calc(34% - 3px);width:10px;height:4px;background:transparent}
+  .scrub .track .thumb{position:absolute;left:34%;transform:translateX(-50%);width:4px;height:16px;border-radius:2px;background:#fff}
+
+  .btnrow{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:6px;position:relative}
+  .ctlbtn{
+    width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    color:#fff;position:relative;flex-shrink:0;
+  }
+  .ctlbtn.transport{width:52px;height:52px}
+  .ctlbtn .msr{font-size:22px}
+  .ctlbtn.transport .msr{font-size:30px}
+  .ctlbtn.replaced{background:rgba(255,193,7,.16);box-shadow:0 0 0 1.5px rgba(255,193,7,.55) inset}
+  .ctlbtn.replaced .msr{color:var(--amber)}
+  .ctlbtn .badge-new{
+    position:absolute;top:-7px;right:-6px;background:var(--amber);color:#241a00;font-size:9px;font-weight:800;
+    padding:2px 5px;border-radius:6px;letter-spacing:.02em;box-shadow:0 2px 6px rgba(0,0,0,.4);
+  }
+  .callout-line{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);white-space:nowrap;font-size:11.5px;color:var(--amber);font-weight:600;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .callout-line::after{content:"";width:1.5px;height:34px;background:linear-gradient(var(--amber),rgba(255,193,7,.15))}
+
+  .spacer{width:14px}
+
+  /* ---- annotation strip under the stage ---- */
+  .annot{display:flex;gap:14px;margin-top:16px;flex-wrap:wrap}
+  .annot .chip{font-size:12px;color:#8b93a5;background:#10131b;border:1px solid #1c2230;padding:6px 12px;border-radius:99px;display:flex;align-items:center;gap:7px}
+  .annot .chip b{color:#f2f4f8;font-weight:600}
+  .annot .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--amber)}
+
+  /* ---- Settings sheet mockup (BottomSheetPageScaffold clone) ---- */
+  .sheetwrap{position:relative}
+  .sheet{
+    background:var(--surface);
+    border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    border:1px solid var(--outline); border-bottom:none;
+    overflow:hidden;
+  }
+  .sheet .header{display:flex;align-items:center;gap:10px;padding:16px 12px 16px 8px;border-bottom:1px solid var(--outline)}
+  .sheet .header .iconbtn{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--text)}
+  .sheet .header .iconbtn:hover{background:rgba(255,255,255,.06)}
+  .sheet .header .icon-lead{color:var(--amber);width:28px;height:28px;display:flex;align-items:center;justify-content:center;margin-left:4px}
+  .sheet .header .title{font-size:18px;font-weight:700;color:var(--text);flex:1}
+  .sheet .body{padding:6px 0 14px}
+
+  .modelist{padding:4px 0}
+  .modeitem{display:flex;align-items:center;gap:0;padding:11px 20px;position:relative;cursor:pointer}
+  .modeitem:hover{background:rgba(255,255,255,.04)}
+  .modeitem .title{flex:1;font-size:15px;color:var(--text)}
+  .modeitem .sub{font-size:12px;color:var(--text-muted);margin-top:1px}
+  .modeitem .titlewrap{flex:1}
+  .modeitem.selected .title{color:var(--amber)}
+  .modeitem .check{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--amber)}
+  .modeitem .check .msr{font-size:20px}
+
+  .divider-row{height:1px;background:var(--outline);margin:8px 20px}
+
+  .strength-block{padding:6px 20px 4px}
+  .strength-block .row1{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .strength-block .label{font-size:15px;color:var(--text)}
+  .strength-block .value{font-size:14px;color:var(--amber);font-variant-numeric:tabular-nums;font-weight:600}
+  /* Gapped slider — matches lib/theme/gapped_track_shape.dart + HandleThumbShape (4x20 vertical pill thumb, 16px track height, 6px gap) */
+  .gslider{height:16px;position:relative;display:flex;align-items:center;margin-bottom:6px}
+  .gslider .seg{position:absolute;top:6px;height:4px;border-radius:2px}
+  .gslider .seg.fill{left:0;width:calc(52% - 5px);background:var(--text)}
+  .gslider .seg.track{left:calc(52% + 5px);right:0;background:rgba(255,255,255,.14)}
+  .gslider .thumb{position:absolute;left:52%;top:50%;transform:translate(-50%,-50%);width:4px;height:20px;border-radius:2px;background:var(--text)}
+  .strength-hint{font-size:12px;color:var(--text-muted);padding:2px 0 14px;line-height:1.55}
+
+  .foot-note{font-size:12px;color:#657089;padding:18px 20px 0;border-top:1px dashed #1c2230;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="meta">
+    <div class="kicker">Player control bar — before / after</div>
+    <h1>3D Mode replacing the dead fullscreen button</h1>
+    <p>Rendered against the app's real Mono design tokens (<code>lib/theme/mono_tokens.dart</code>) — grayscale surfaces, amber as the only accent color, Material Symbols Rounded icon set (fill 1 / weight 700), and the gapped-track slider style from <code>gapped_track_shape.dart</code> / <code>HandleThumbShape</code>. Not a generic mock — this is what the shipped screen looks like.</p>
+  </div>
+
+  <div class="stagelabel">Control bar — button swapped, 3D active</div>
+  <div class="stage">
+    <div class="filmgrain"></div>
+    <div class="topbar">
+      <div class="back"><span class="msr">arrow_back</span></div>
+      <div class="titles">
+        <div class="t1">Planet Earth III</div>
+        <div class="t2">S01E04 · Grasslands</div>
+      </div>
+    </div>
+
+    <div class="controlbar">
+      <div class="scrub">
+        <div class="time">18:42</div>
+        <div class="track">
+          <div class="rail"></div>
+          <div class="fill"></div>
+          <div class="thumb"></div>
+        </div>
+        <div class="time dur">54:10</div>
+      </div>
+
+      <div class="btnrow">
+        <div class="ctlbtn"><span class="msr">skip_previous</span></div>
+        <div class="ctlbtn"><span class="msr">replay_10</span></div>
+        <div class="ctlbtn transport"><span class="msr">pause</span></div>
+        <div class="ctlbtn"><span class="msr">forward_10</span></div>
+        <div class="ctlbtn"><span class="msr">subtitles</span></div>
+        <div class="ctlbtn"><span class="msr">aspect_ratio</span></div>
+        <div class="ctlbtn replaced">
+          <div class="callout-line">Fullscreen → 3D Mode</div>
+          <span class="msr">view_in_ar</span>
+          <div class="badge-new">3D</div>
+        </div>
+        <div class="ctlbtn"><span class="msr">tune</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="chip"><span class="dot"></span>Position: same slot as today's fullscreen button — <b>track_chapter_controls.dart:356-372</b></div>
+    <div class="chip"><span class="dot"></span>Icon: <b>Symbols.view_in_ar_rounded</b>, amber fill = active state (same convention <b>isActive</b> uses everywhere else)</div>
+    <div class="chip"><span class="dot"></span>Visible only when <b>Theater3DBridge.isAvailable</b> — Quest + theater build, never shown on desktop/mobile/TV</div>
+  </div>
+
+  <div class="stagelabel">Tapping it opens — 3D Mode menu</div>
+
+  <div class="sheetwrap">
+    <div class="sheet">
+      <div class="header">
+        <div class="iconbtn"><span class="msr">arrow_back</span></div>
+        <div class="icon-lead"><span class="msr" style="font-size:22px">view_in_ar</span></div>
+        <div class="title">3D Mode</div>
+      </div>
+
+      <div class="body">
+        <div class="modelist">
+          <div class="modeitem">
+            <div class="titlewrap">
+              <div class="title">Off</div>
+            </div>
+          </div>
+          <div class="modeitem selected">
+            <div class="titlewrap">
+              <div class="title">Auto-detect</div>
+              <div class="sub">Plays real 3D sources in stereo; converts everything else</div>
+            </div>
+            <div class="check"><span class="msr">check</span></div>
+          </div>
+          <div class="modeitem">
+            <div class="titlewrap">
+              <div class="title">Force side-by-side</div>
+            </div>
+          </div>
+          <div class="modeitem">
+            <div class="titlewrap">
+              <div class="title">Force over-under</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider-row"></div>
+
+        <div class="strength-block">
+          <div class="row1">
+            <div class="label">Strength</div>
+            <div class="value">52%</div>
+          </div>
+          <div class="gslider">
+            <div class="seg fill"></div>
+            <div class="seg track"></div>
+            <div class="thumb"></div>
+          </div>
+          <div class="strength-hint">Only applies to converted (non-3D-source) video. Higher values increase pop-out but can feel less comfortable on longer sessions.</div>
+        </div>
+      </div>
+    </div>
+    <div class="foot-note">Sheet chrome: <code>BottomSheetPageScaffold</code> header (back chevron + leading icon + title, divider below) exactly as used by every other player settings view — <code>_buildZoomView()</code>'s preset-list pattern for the mode picker, <code>volume_control.dart</code>'s <code>Slider</code> for strength. No new sheet component, no new interaction pattern.</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
 
+    <!-- :theater3d declares minSdk 29 (Quest/Horizon OS only runs on
+         far newer API levels; see android/theater3d/build.gradle.kts),
+         above the app's own minSdk 25 floor (Fire OS 6.x, :libmpv's floor).
+         It merges in at all only for THEATER_MODE=1 builds (Quest-only), so
+         this override is inert on every other target; without it the
+         manifest merge itself fails rather than anything at install time. -->
+    <uses-sdk tools:overrideLibrary="com.edde746.plezy.theater3d" />
+
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>

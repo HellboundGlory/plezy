@@ -32,3 +32,7 @@ include(":quest")
 // Sideload self-update permission overlay, shared by the Quest and Fire TV
 // builds. Configured unconditionally; only built when depended on.
 include(":selfupdate")
+// Quest / Horizon OS "3D Theater" side-mode (PLAN_3D.md Phase 1). Configured
+// unconditionally, same as :quest/:selfupdate above, so IDE sync stays
+// stable; only actually built when the app depends on it (THEATER_MODE=1).
+include(":theater3d")

@@ -418,6 +418,19 @@ android {
       // is :libmpv's extractLibmpvNative output (the tarballs' 16 KB-capable
       // libc++), wired below via the JniLibFolders dependency.
       jniLibs.srcDir(libmpvLibcxxJniDir)
+
+      // Theater3D Flutter/mpv glue (PLAN_3D.md Phase 1). An extra source
+      // directory, not a product flavor -- same reasoning as the QUEST/
+      // AMAZON env-var switches below (see QUEST_BUILD.md's "Why not
+      // product flavors?"). Only this directory imports :theater3d
+      // (wired below, also THEATER_MODE-gated) or android.view.Surface's
+      // headless MpvPlayerCore path; MainActivity.kt reaches it via
+      // reflection precisely because MainActivity.kt itself compiles
+      // unconditionally and must not hard-import a class this source set
+      // may not exist.
+      if (System.getenv("THEATER_MODE") != null) {
+        kotlin.srcDir("src/theater3d/kotlin")
+      }
     }
   }
 
@@ -496,6 +509,14 @@ dependencies {
   // it, since self-updating violates Play policy.
   if (System.getenv("QUEST") != null || System.getenv("AMAZON") != null) {
     implementation(project(":selfupdate"))
+  }
+
+  // Quest / Horizon OS "3D Theater" side-mode (see android/theater3d,
+  // PLAN_3D.md Phase 1). Pulls in the Meta Spatial SDK runtime AARs, so
+  // this stays THEATER_MODE-only rather than folded into the QUEST switch
+  // above -- a Quest build without theater mode must not carry them.
+  if (System.getenv("THEATER_MODE") != null) {
+    implementation(project(":theater3d"))
   }
 
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")

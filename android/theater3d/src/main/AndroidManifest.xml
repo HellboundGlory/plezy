@@ -1,0 +1,34 @@
+<!-- Quest / Horizon OS "3D Theater" side-mode. PLAN_3D.md Phase 1.
+
+     Declares Theater3DActivity only. No VR intent category or immersive
+     metadata is added to MainActivity anywhere, period: the main app stays a
+     plain 2D panel (PLAN_3D.md's non-negotiable #0); this Activity is the
+     only immersive entry point this fork ships, and it is reached solely
+     via an explicit startActivity from Theater3DBridge.launch(), never
+     from Horizon's app library (no LAUNCHER category, so it never gets its
+     own icon).
+
+     `android:exported="false"`: nothing outside this process ever needs to
+     target it directly.
+
+     The <category android:name="com.oculus.intent.category.VR" /> entry is
+     the fix for the Phase 0 bug where the scene code ran to completion
+     (onSceneReady/drawTestPattern logged normally) but Horizon never
+     granted an immersive compositor session, so the wearer kept seeing
+     whatever 2D panel already had focus. Confirmed 10/10 clean launches on
+     a real Quest 3 with this present, see PLAN_3D.md's changelog. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.edde746.plezy.theater3d.Theater3DActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|density|uiMode"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

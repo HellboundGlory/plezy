@@ -3,6 +3,7 @@ package com.edde746.plezy.mpv
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
+import android.graphics.PixelFormat
 import android.media.AudioAttributes
 import android.os.Build
 import android.os.Handler
@@ -55,7 +56,21 @@ class MpvPlayerCore private constructor(
    * that a command without a native player fails.
    */
   private val commandRunnerOverride: (suspend (Array<String>) -> Long?)?,
-  initializedForTesting: Boolean
+  initializedForTesting: Boolean,
+  /**
+   * Skips every Activity-window concern -- the [android.widget.FrameLayout]
+   * container, the video/OSD [SurfaceView]s, `PlayerSurfaceHost`'s
+   * content-view attach, and the Flutter-overlay layout listener -- so this
+   * core never touches the host Activity's window. For a session driving a
+   * compositor-owned [Surface] it never created itself (Quest's Theater3D
+   * panel -- see android/app/src/theater3d/TheaterMpvSession.kt), attach it
+   * with [attachHeadlessSurface] once it is ready; this core reuses the
+   * exact same [surfaceCreated]/[surfaceChanged]/[surfaceDestroyed] pipeline
+   * every SurfaceView-backed session already goes through. A headless
+   * session never gets an OSD plane (mediacodec's OSD is itself a
+   * SurfaceView-backed plane), so subtitles do not render in this mode.
+   */
+  private val headless: Boolean = false
 ) : SurfaceHolder.Callback,
   SurfacePlayerCore {
   constructor(
@@ -63,21 +78,22 @@ class MpvPlayerCore private constructor(
     audioOnly: Boolean = false,
     hardwareDecoding: Boolean = true,
     osdRenderScale: Float = 1f,
-    initialLogLevel: String = "warn"
-  ) : this(context, audioOnly, hardwareDecoding, osdRenderScale, initialLogLevel, null, null, false)
+    initialLogLevel: String = "warn",
+    headless: Boolean = false
+  ) : this(context, audioOnly, hardwareDecoding, osdRenderScale, initialLogLevel, null, null, false, headless)
 
   internal constructor(
     context: Context,
     audioOnly: Boolean,
     propertyWriter: (suspend (String, String) -> Unit)?
-  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, null, true)
+  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, null, true, false)
 
   internal constructor(
     context: Context,
     audioOnly: Boolean,
     propertyWriter: (suspend (String, String) -> Unit)?,
     commandRunner: suspend (Array<String>) -> Long?
-  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, commandRunner, true)
+  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, commandRunner, true, false)
 
   companion object {
     private const val TAG = "MpvPlayerCore"
@@ -280,7 +296,7 @@ class MpvPlayerCore private constructor(
   private var flutterOverlayApplied = false
 
   private fun ensureFlutterOverlayOnTop() {
-    if (audioOnly || disposing || flutterOverlayApplied) return
+    if (audioOnly || disposing || flutterOverlayApplied || headless) return
     val contentView = activity.findViewById<ViewGroup>(android.R.id.content)
     contentView.post {
       if (disposing || !isInitialized) return@post
@@ -402,26 +418,34 @@ class MpvPlayerCore private constructor(
           log = { emitLog("info", "framerate", it) }
         )
 
-        surfaceContainer = PlayerSurfaceHost.createContainer(activity)
-        surfaceView = PlayerSurfaceHost.createVideoSurface(activity, this@MpvPlayerCore)
-        surfaceContainer!!.addView(surfaceView)
-        if (usesMediaCodecVo) {
-          osdSurfaceView = PlayerSurfaceHost.createOsdSurface(activity, osdSurfaceCallback, osdRenderScale)
-          surfaceContainer!!.addView(osdSurfaceView)
-        }
+        if (headless) {
+          // A headless core is fed a compositor-owned Surface it never
+          // created itself (see attachHeadlessSurface) -- no
+          // FrameLayout/SurfaceView/content-view attach, and no OSD plane
+          // (mediacodec's OSD is itself a SurfaceView-backed plane).
+          Log.d(TAG, "Headless core: skipping SurfaceView/window setup")
+        } else {
+          surfaceContainer = PlayerSurfaceHost.createContainer(activity)
+          surfaceView = PlayerSurfaceHost.createVideoSurface(activity, this@MpvPlayerCore)
+          surfaceContainer!!.addView(surfaceView)
+          if (usesMediaCodecVo) {
+            osdSurfaceView = PlayerSurfaceHost.createOsdSurface(activity, osdSurfaceCallback, osdRenderScale)
+            surfaceContainer!!.addView(osdSurfaceView)
+          }
 
-        val contentView = PlayerSurfaceHost.attachToContent(activity, surfaceContainer!!)
-        flutterOverlayApplied = PlayerSurfaceHost.ensureFlutterOverlayOnTop(contentView, surfaceContainer)
-        ensureFlutterOverlayOnTop()
-        overlayLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+          val contentView = PlayerSurfaceHost.attachToContent(activity, surfaceContainer!!)
+          flutterOverlayApplied = PlayerSurfaceHost.ensureFlutterOverlayOnTop(contentView, surfaceContainer)
           ensureFlutterOverlayOnTop()
-          val sv = surfaceView
-          if (sv != null) applySurfaceSize(sv.width, sv.height)
-          applyVideoRectLayout()
-        }
-        contentView.viewTreeObserver.addOnGlobalLayoutListener(overlayLayoutListener)
+          overlayLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            ensureFlutterOverlayOnTop()
+            val sv = surfaceView
+            if (sv != null) applySurfaceSize(sv.width, sv.height)
+            applyVideoRectLayout()
+          }
+          contentView.viewTreeObserver.addOnGlobalLayoutListener(overlayLayoutListener)
 
-        Log.d(TAG, "SurfaceView added to content view")
+          Log.d(TAG, "SurfaceView added to content view")
+        }
       }
 
       scope.launch {
@@ -717,6 +741,38 @@ class MpvPlayerCore private constructor(
     }
     if (player == null) return
     handoffDestroyedSurface("surfaceDestroyed", videoLost = true)
+  }
+
+  // Headless (compositor-owned Surface) attach point -- see the `headless`
+  // constructor parameter's doc comment.
+
+  /**
+   * Attaches a Surface this core never created itself -- e.g. the raw
+   * compositor Surface a Quest Theater3D panel hands back through its
+   * `surfaceConsumer` (see android/theater3d/Theater3DPanel.kt). Only
+   * valid on a core built with `headless = true`; a no-op otherwise.
+   *
+   * Reuses the exact [surfaceCreated]/[surfaceChanged] pipeline every
+   * SurfaceView-backed session already goes through, via a minimal
+   * [SurfaceHolder] shim -- there is no real [SurfaceHolder] to source one
+   * from here, since a Spatial SDK panel has no Android View.
+   */
+  fun attachHeadlessSurface(surface: Surface, width: Int, height: Int) {
+    if (!headless || audioOnly) return
+    val holder = HeadlessSurfaceHolder(surface)
+    surfaceCreated(holder)
+    surfaceChanged(holder, PixelFormat.OPAQUE, width, height)
+  }
+
+  /**
+   * Counterpart to [attachHeadlessSurface]; call before the compositor
+   * surface becomes invalid, passing the same [Surface] that was attached
+   * (unused by [surfaceDestroyed] today, but kept symmetric rather than
+   * relying on that).
+   */
+  fun detachHeadlessSurface(surface: Surface) {
+    if (!headless || audioOnly) return
+    surfaceDestroyed(HeadlessSurfaceHolder(surface))
   }
 
   // OSD surface (the vo=mediacodec subtitle/OSD plane)
@@ -2143,4 +2199,32 @@ class MpvPlayerCore private constructor(
     // Reset scope for potential re-initialization
     scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   }
+}
+
+/**
+ * Minimal [SurfaceHolder] wrapping a [Surface] this process never created a
+ * real holder for -- a Spatial SDK panel's `surfaceConsumer` hands back a
+ * raw [Surface] with no Android View/SurfaceHolder behind it (see
+ * [MpvPlayerCore.attachHeadlessSurface]). Every method beyond [getSurface]
+ * is unused by [MpvPlayerCore]'s [SurfaceHolder.Callback] implementation
+ * today; they throw rather than silently no-op so a future caller that
+ * starts relying on one notices immediately.
+ */
+private class HeadlessSurfaceHolder(private val target: Surface) : SurfaceHolder {
+  override fun addCallback(callback: SurfaceHolder.Callback?) = unsupported()
+  override fun removeCallback(callback: SurfaceHolder.Callback?) = unsupported()
+  override fun isCreating(): Boolean = false
+  override fun setType(type: Int) = unsupported()
+  override fun setFixedSize(width: Int, height: Int) = unsupported()
+  override fun setSizeFromLayout() = unsupported()
+  override fun setFormat(format: Int) = unsupported()
+  override fun setKeepScreenOn(screenOn: Boolean) = unsupported()
+  override fun lockCanvas(): android.graphics.Canvas = unsupported()
+  override fun lockCanvas(dirty: android.graphics.Rect?): android.graphics.Canvas = unsupported()
+  override fun unlockCanvasAndPost(canvas: android.graphics.Canvas?) = unsupported()
+  override fun getSurfaceFrame(): android.graphics.Rect = unsupported()
+  override fun getSurface(): Surface = target
+
+  private fun unsupported(): Nothing =
+    throw UnsupportedOperationException("HeadlessSurfaceHolder only supports getSurface()")
 }

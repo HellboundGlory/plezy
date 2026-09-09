@@ -316,6 +316,10 @@ Output: `build/app/outputs/flutter-apk/app-release.apk`
 `--dart-define=QUEST_BUILD=true` is optional; it only sets the `kQuestBuild`
 hint in `lib/quest/quest_platform.dart`.
 
+A separate, additive flag, `THEATER_MODE=1`, opts into the Spatial SDK
+3D/SBS theater side-mode — see [Theater mode](#theater-mode-quest-3dsbs-playback)
+below.
+
 ### Signing — required, not optional
 
 `flutter build apk --release` produces an **unsigned** APK unless
@@ -676,6 +680,46 @@ Confirmed on a Quest 3 (`eureka`, Horizon OS on Android 14) over ADB:
   expose `oculus.hardware.standalone_vr`. Device ABI list is
   `arm64-v8a,armeabi-v7a,armeabi` — no x86, confirming the arm64-only APK.
 
+## Theater mode (Quest 3D/SBS playback)
+
+A second, opt-in build flag on top of `QUEST=1`: `THEATER_MODE=1` pulls in
+`android/theater3d`, a Meta Spatial SDK module that gives already-3D
+SBS/OU masters real per-eye stereo, entered only during playback. The
+full design — why this needs Spatial SDK at all when the rest of the app is
+a plain 2D panel, the two on-device bugs Phase 0's spike found and fixed,
+the native/Flutter handoff — is [PLAN_3D.md](PLAN_3D.md); this section is
+only the build-time mechanics.
+
+```bash
+source .questenv
+THEATER_MODE=1 QUEST=1 flutter build apk --release \
+  --dart-define=QUEST_BUILD=true \
+  --target-platform=android-arm64
+```
+
+`THEATER_MODE=1` alone (without `QUEST=1`) also builds and installs —
+`android/theater3d`'s own manifest carries everything `Theater3DActivity`
+needs — but has no reason to ship that way: theater mode is Quest-only,
+so every real build passes both flags together.
+
+**Status as of PLAN_3D.md Phase 1:** the native Spatial SDK panel, the
+headless second `MpvPlayerCore` that decodes into it, and the
+`MethodChannel`/`EventChannel` bridge (`lib/quest/theater3d_bridge.dart`)
+are all shipped and unit-tested. There is **no player-UI trigger yet** —
+nothing calls `Theater3DBridge.open()` from a running screen. That is
+Phase 2's "heuristic 2D→3D shader + player UI" work (the button that
+replaces the dead fullscreen control). Verified on the same Quest 3 as
+above with a `THEATER_MODE=1 QUEST=1` release build installed in place
+over an existing signed install (data preserved): the app launches and
+resumes exactly as an ordinary `QUEST=1` build (non-negotiable #0 — see
+PLAN_3D.md — holds), and `Theater3DActivity` is registered with the
+`com.oculus.intent.category.VR` category and correctly rejects an external
+`am start` (`android:exported="false"` enforced by the OS, confirmed by
+the `SecurityException` it raises). Full playback-path verification (open
+→ real per-eye stereo → exit → resume the flat player) needs Phase 2's
+button, since the panel is only ever reached through the app's own
+`Theater3DBridge.launch()` call, never an external intent.
+
 ## Known considerations
 
 None of these are bugs in the fork; they are consequences of running upstream
@@ -715,22 +759,42 @@ lib/selfupdate/self_update_button.dart          # the progress-reporting primary
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
 test/selfupdate/self_update_button_test.dart
+android/theater3d/build.gradle.kts              # Spatial SDK theater module, THEATER_MODE=1 only
+android/theater3d/src/main/AndroidManifest.xml  # declares Theater3DActivity only
+android/theater3d/src/main/kotlin/...           # Theater3DActivity/Panel/Bridge/StereoModeResolver
+android/theater3d/src/test/kotlin/...           # StereoModeResolver unit tests
+android/app/src/theater3d/kotlin/...            # Theater3DChannel + TheaterMpvSession (Flutter glue)
+lib/quest/theater3d_bridge.dart                 # MethodChannel/EventChannel wrapper (PLAN_3D.md)
+test/quest/theater3d_bridge_test.dart
 QUEST_BUILD.md                                  # this file
 .questenv                                       # toolchain environment
 ```
 
 ## Upstream files this fork modifies
 
-Six files, and this list is the conflict surface for every upstream sync — step
+Nine files, and this list is the conflict surface for every upstream sync — step
 2 of [Shipping an upstream update](#shipping-an-upstream-update) is just asking
 whether upstream touched any of them. The Gradle changes are insertions guarded
 by `System.getenv("QUEST")`, so the default Play build stays byte-identical to
 upstream.
 
-- `android/settings.gradle.kts` — `include(":quest")` and `include(":selfupdate")`
+- `android/settings.gradle.kts` — `include(":quest")`, `include(":selfupdate")`
+  and `include(":theater3d")`
 - `android/app/build.gradle.kts` — the `QUEST` block mirroring the existing
   `AMAZON` block, `abiFilters.clear()` in the `AMAZON` block, and the two
-  conditional module dependencies
+  conditional module dependencies, plus the `THEATER_MODE`-gated `:theater3d`
+  dependency and `src/theater3d` Kotlin source set (PLAN_3D.md Phase 1)
+- `android/app/src/main/AndroidManifest.xml` — a `<uses-sdk
+  tools:overrideLibrary="com.edde746.plezy.theater3d">` entry, inert unless
+  `:theater3d` (minSdk 29) is actually on the classpath
+- `android/app/src/main/kotlin/com/edde746/plezy/MainActivity.kt` —
+  reflectively constructs `Theater3DChannel` in `configureFlutterEngine`
+  (THEATER_MODE=1 builds only; `ClassNotFoundException` is the expected,
+  silent outcome otherwise) and closes it in `onDestroy`
+- `android/app/src/main/kotlin/com/edde746/plezy/mpv/MpvPlayerCore.kt` — a
+  `headless` constructor parameter that skips all Activity-window/SurfaceView
+  setup, plus `attachHeadlessSurface`/`detachHeadlessSurface` for driving a
+  Spatial SDK panel's compositor-owned `Surface` (PLAN_3D.md Phase 1.4)
 - `lib/widgets/tv_browse_rail.dart` — a `Listener` that turns Horizon's
   synthesized mouse wheel into hub movement (see "Scrolling with the
   controller")

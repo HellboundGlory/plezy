@@ -118,6 +118,16 @@ class MainActivity : FlutterActivity() {
   private val externalPlayerChannel = ExternalPlayerChannel(this)
   private val exitDiagnosticsRequested = AtomicBoolean(false)
 
+  /**
+   * `com.edde746.plezy.theater3d.Theater3DChannel`, present only in
+   * THEATER_MODE=1 builds (see android/app/build.gradle.kts's
+   * `src/theater3d` source set and android/theater3d/PLAN_3D.md Phase 1).
+   * Held as [AutoCloseable] and constructed via reflection so this file
+   * compiles unchanged in the default and Fire TV builds, where the class
+   * does not exist on the classpath at all.
+   */
+  private var theater3DChannel: AutoCloseable? = null
+
   private inline fun logTextInputDiag(message: () -> String) {
     if (TEXT_INPUT_DIAGNOSTICS_ENABLED) {
       Log.i(TAG, "TextInputDiag ${message()}")
@@ -600,6 +610,8 @@ class MainActivity : FlutterActivity() {
     assistiveTechnology?.release()
     assistiveTechnology = null
     assistiveTechnologyChannel = null
+    theater3DChannel?.close()
+    theater3DChannel = null
     activityStarted = false
     flutterSurfaceReconnectPending = false
     flutterTextureView = null
@@ -931,6 +943,27 @@ class MainActivity : FlutterActivity() {
         }
         else -> result.notImplemented()
       }
+    }
+
+    setupTheater3DChannelIfPresent(flutterEngine)
+  }
+
+  /**
+   * Constructs `com.edde746.plezy.theater3d.Theater3DChannel` reflectively
+   * -- see [theater3DChannel]'s doc comment. `ClassNotFoundException` is
+   * the expected, silent outcome on the default/Fire TV builds; any other
+   * failure means a THEATER_MODE=1 build's own wiring is broken and is
+   * logged rather than swallowed.
+   */
+  private fun setupTheater3DChannelIfPresent(flutterEngine: FlutterEngine) {
+    try {
+      val clazz = Class.forName("com.edde746.plezy.theater3d.Theater3DChannel")
+      val ctor = clazz.getConstructor(android.app.Activity::class.java, io.flutter.plugin.common.BinaryMessenger::class.java)
+      theater3DChannel = ctor.newInstance(this, flutterEngine.dartExecutor.binaryMessenger) as AutoCloseable
+    } catch (e: ClassNotFoundException) {
+      // THEATER_MODE was not set for this build; :theater3d is not on the classpath.
+    } catch (e: Exception) {
+      Log.e(TAG, "Theater3DChannel present but failed to initialize", e)
     }
   }
 

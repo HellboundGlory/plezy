@@ -75,3 +75,4 @@ maestro/**/*.png
 
 server/deploy.sh
 server/Caddyfile
+android/build/

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plezy Quest — 3D / SBS Playback Research</title>
+<style>
+  :root{
+    --bg:#0b0e14; --bg2:#10141d; --panel:#141925; --panel2:#1a2130;
+    --border:#232b3d; --text:#e7ecf5; --muted:#8b96ad; --muted2:#6b7690;
+    --accent:#7c9fff; --accent2:#b98cff; --good:#3ecf8e; --warn:#f2b84b; --bad:#ff6b6b;
+    --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6}
+  body{background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(124,159,255,0.14), transparent 60%),
+    radial-gradient(1000px 500px at 100% 0%, rgba(185,140,255,0.10), transparent 55%),
+    var(--bg);
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 120px}
+  header.hero{padding:72px 28px 40px;text-align:left;max-width:1080px;margin:0 auto}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:rgba(124,159,255,0.10);border:1px solid rgba(124,159,255,0.25);padding:6px 12px;border-radius:999px}
+  h1{font-size:40px;line-height:1.15;margin:20px 0 10px;font-weight:700;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:17px;max-width:760px}
+  .verdict{margin-top:28px;border:1px solid var(--border);background:linear-gradient(180deg, var(--panel2), var(--panel));border-radius:16px;padding:22px 24px;display:flex;gap:18px;align-items:flex-start}
+  .verdict .icon{font-size:22px;line-height:1;flex-shrink:0;width:40px;height:40px;border-radius:12px;background:rgba(242,184,75,0.12);border:1px solid rgba(242,184,75,0.35);display:flex;align-items:center;justify-content:center}
+  .verdict h3{margin:0 0 6px;font-size:15px;color:var(--warn);letter-spacing:.02em}
+  .verdict p{margin:0;color:var(--text);font-size:15px}
+  .verdict p b{color:#fff}
+
+  section{max-width:1080px;margin:0 auto;padding:52px 28px 0}
+  section h2{font-size:23px;margin:0 0 6px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+  section h2 .num{font-family:var(--mono);font-size:13px;color:var(--muted2);border:1px solid var(--border);padding:2px 8px;border-radius:6px}
+  .lede{color:var(--muted);font-size:15px;margin:0 0 26px;max-width:760px}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:16px}
+  .card h4{margin:0 0 8px;font-size:15.5px;color:#fff}
+  .card p{margin:0 0 0;color:var(--muted);font-size:14.5px}
+  .card p+p{margin-top:10px}
+
+  code, .code{font-family:var(--mono);font-size:12.8px;background:rgba(124,159,255,0.09);border:1px solid rgba(124,159,255,0.18);color:#cfe0ff;padding:1px 6px;border-radius:5px}
+  pre{background:#0d1119;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.6px;color:#cbd6ee;line-height:1.55}
+  pre .c{color:var(--muted2)}
+
+  .filegrid{display:grid;grid-template-columns:290px 1fr;gap:2px 18px;font-size:13.5px}
+  .filegrid .f{font-family:var(--mono);color:var(--accent);padding:10px 0;border-top:1px solid var(--border)}
+  .filegrid .d{color:var(--muted);padding:10px 0;border-top:1px solid var(--border)}
+  .filegrid .f:first-child, .filegrid .d:first-child{border-top:none}
+
+  .diagram{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:20px 0}
+  .eyebox{border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--panel)}
+  .eyebox h5{margin:0 0 4px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted2)}
+  .eyebox .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:12px}
+  .tag.bad{background:rgba(255,107,107,0.14);color:var(--bad);border:1px solid rgba(255,107,107,.3)}
+  .tag.good{background:rgba(62,207,142,0.14);color:var(--good);border:1px solid rgba(62,207,142,.3)}
+  .panelvis{position:relative;height:150px;border-radius:10px;background:#05070c;border:1px solid var(--border);overflow:hidden;display:flex}
+  .panelvis .half{flex:1;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--muted2);position:relative}
+  .panelvis .half:first-child{border-right:1px dashed #2a3450}
+  .eyerow{display:flex;gap:10px;margin-top:12px}
+  .eyeicon{flex:1;text-align:center;font-size:11px;color:var(--muted)}
+  .eyeicon .glyph{font-size:20px;display:block;margin-bottom:4px}
+  .eyebox p.note{margin-top:12px;font-size:13px;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.6px;margin:8px 0 4px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  tr:last-child td{border-bottom:none}
+  td b{color:#fff}
+
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;letter-spacing:.02em}
+  .pill.good{background:rgba(62,207,142,0.15);color:var(--good)}
+  .pill.warn{background:rgba(242,184,75,0.15);color:var(--warn)}
+  .pill.bad{background:rgba(255,107,107,0.15);color:var(--bad)}
+  .pill.mid{background:rgba(124,159,255,0.15);color:var(--accent)}
+
+  .options{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}
+  .opt{border:1px solid var(--border);border-radius:14px;padding:20px;background:var(--panel);position:relative}
+  .opt.reject{opacity:.72}
+  .opt.pick{border-color:rgba(62,207,142,0.4);background:linear-gradient(180deg, rgba(62,207,142,0.06), var(--panel))}
+  .opt .badge{position:absolute;top:-11px;right:16px;font-size:10.5px;font-weight:700;letter-spacing:.05em;padding:3px 10px;border-radius:999px}
+  .opt.pick .badge{background:var(--good);color:#04140c}
+  .opt.reject .badge{background:var(--bad);color:#1c0505}
+  .opt h4{margin:6px 0 8px;font-size:15px}
+  .opt p{color:var(--muted);font-size:13.4px;margin:0 0 10px}
+  .opt ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
+  .opt ul li{margin-bottom:4px}
+
+  .timeline{border-left:2px solid var(--border);margin-left:8px;padding-left:26px}
+  .tl-item{position:relative;padding-bottom:28px}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-item::before{content:"";position:absolute;left:-33px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);border:2px solid var(--accent)}
+  .tl-item h4{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:10px}
+  .tl-item p{margin:0;color:var(--muted);font-size:13.8px}
+  .tl-item .size{font-family:var(--mono);font-size:11px;color:var(--muted2);border:1px solid var(--border);padding:2px 7px;border-radius:6px}
+
+  .mock{border:1px solid var(--border);border-radius:16px;background:#05070c;padding:0;overflow:hidden;margin:20px 0}
+  .mock .screen{position:relative;aspect-ratio:16/8.2;background:
+    linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,.75) 100%),
+    linear-gradient(120deg,#1c2438,#0c1018 70%);
+  }
+  .mock .bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:22px;padding:14px 20px;color:#dbe3f5}
+  .mock .btn{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:10px;color:#aeb8cf}
+  .mock .btn .g{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.06);font-size:16px}
+  .mock .btn.active .g{background:var(--accent);color:#0b0e14}
+  .mock .btn.active{color:#fff}
+  .mock .sheet{position:absolute;right:18px;bottom:76px;width:270px;background:rgba(16,20,29,0.97);border:1px solid var(--border);border-radius:14px;padding:16px;backdrop-filter:blur(6px);box-shadow:0 20px 50px rgba(0,0,0,.5)}
+  .mock .sheet h6{margin:0 0 12px;font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em}
+  .seg{display:flex;background:rgba(255,255,255,0.05);border-radius:9px;padding:3px;margin-bottom:14px}
+  .seg div{flex:1;text-align:center;font-size:11.5px;padding:7px 4px;border-radius:7px;color:var(--muted)}
+  .seg div.on{background:var(--accent);color:#0b0e14;font-weight:600}
+  .slider-row{margin-bottom:6px}
+  .slider-row .lbl{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:8px}
+  .slider-row .lbl b{color:#fff;font-weight:500}
+  .track{height:5px;border-radius:99px;background:rgba(255,255,255,0.08);position:relative}
+  .track .fill{position:absolute;left:0;top:0;bottom:0;width:58%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .track .knob{position:absolute;left:58%;top:50%;transform:translate(-50%,-50%);width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 0 0 4px rgba(124,159,255,.25)}
+  .mock .caption{padding:10px 16px;font-size:12px;color:var(--muted2);border-top:1px solid var(--border);background:#0a0d14}
+
+  .risklist{display:grid;gap:10px}
+  .risk{display:grid;grid-template-columns:110px 1fr;gap:16px;border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--panel)}
+  .risk .lvl{font-size:11px;font-weight:700;letter-spacing:.04em;height:fit-content;padding:4px 9px;border-radius:7px;text-align:center}
+  .risk .lvl.high{background:rgba(255,107,107,.15);color:var(--bad)}
+  .risk .lvl.med{background:rgba(242,184,75,.15);color:var(--warn)}
+  .risk .lvl.low{background:rgba(62,207,142,.15);color:var(--good)}
+  .risk .body b{color:#fff;font-size:13.8px}
+  .risk .body p{margin:4px 0 0;color:var(--muted);font-size:13px}
+
+  .sources{font-size:12.5px;color:var(--muted2)}
+  .sources a{color:var(--accent);text-decoration:none}
+  .sources ul{padding-left:18px}
+  .sources li{margin-bottom:6px}
+
+  footer{max-width:1080px;margin:70px auto 0;padding:28px;border-top:1px solid var(--border);color:var(--muted2);font-size:12.5px;text-align:center}
+
+  @media (max-width:760px){
+    .options{grid-template-columns:1fr}
+    .diagram{grid-template-columns:1fr}
+    h1{font-size:30px}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <span class="eyebrow">● Research report — plezy-quest</span>
+  <h1>Making Quest playback 3D:<br>what "SBS toggle" actually requires</h1>
+  <p class="sub">You asked for a 3D/SBS toggle behind the dead fullscreen button, with a strength control. The UI half of that is a half-day change. The 3D half runs into a hard platform wall this fork has deliberately stayed on the right side of since day one — this report lays out exactly why, what a real fix costs, and the path that's actually worth building.</p>
+
+  <div class="verdict">
+    <div class="icon">⚠</div>
+    <div>
+      <h3>THE ONE THING TO READ FIRST</h3>
+      <p><b>A GLSL shader that packs frames into side-by-side pixels will not look 3D on Quest.</b> Plezy-quest is deliberately a flat 2D Android panel (no Spatial SDK, no VR intent — see <code>QUEST_BUILD.md</code>). Horizon composites that panel once and shows the identical image to both eyes. An SBS-packed frame on a flat panel just looks like a squashed double image, not depth. Real per-eye stereo on Quest requires Horizon's <b>Spatial SDK stereo panel mode</b>, which is a different, larger architecture — and a sibling project in your own memory already tried it and ripped it back out. Full story below.</p>
+    </div>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">1</span> Current state — the button you're replacing</h2>
+  <p class="lede">Grounded directly in the current tree, not assumptions. The fullscreen affordance is real, wired, and dead in exactly the way you described.</p>
+
+  <div class="card">
+    <h4>Where it lives</h4>
+    <p>The button is built in <code>TrackChapterControls</code> and rendered wherever the shared control row appears (desktop chrome and — via <code>TvDetection</code> counting Quest's absent touchscreen as a TV signal — the branch Quest actually renders through). Icon/label/handler are ordinary fields on an immutable <code>TrackControlsState</code> snapshot, the same shape used for the working zoom and box-fit buttons next to it.</p>
+    <div class="filegrid">
+      <div class="f">lib/widgets/video_controls/widgets/track_chapter_controls.dart:356-372</div>
+      <div class="d">Button itself — <code>Symbols.fullscreen_rounded</code> / <code>fullscreen_exit_rounded</code>, gated by a local <code>isDesktop</code> flag, <code>onPressed: state.onToggleFullscreen</code>.</div>
+      <div class="f">lib/widgets/video_controls/parts/visibility.dart:189-192</div>
+      <div class="d">The actual handler: <code>if (!PlatformDetector.isDesktopOS()) return;</code> — a hard early-exit for every non-Windows/macOS/Linux target. This is the dead no-op. <code>isDesktopOS()</code> checks the underlying OS, not device form factor, so Android/Quest can never pass it.</div>
+      <div class="f">lib/utils/platform_detector.dart:270-279</div>
+      <div class="d"><code>isDesktop(context)</code> (UI-layout gate, <code>!isMobile(context)</code>) vs. <code>isDesktopOS()</code> (OS-capability gate, Windows/macOS/Linux only) are two different checks with the same name-shape — the button's <i>visibility</i> and its <i>handler</i> read different ones, which is exactly how a visible-but-inert button happens.</div>
+      <div class="f">lib/widgets/video_controls/models/track_controls_state.dart:38,46</div>
+      <div class="d"><code>isFullscreen</code> / <code>onToggleFullscreen</code> — the two fields to repurpose or replace with <code>is3DModeEnabled</code> / <code>onOpen3DMenu</code>.</div>
+      <div class="f">lib/widgets/video_controls/parts/track_controls.dart:155-210</div>
+      <div class="d"><code>_buildTrackControlsState()</code> — assembles the screen's raw state into the row's props. New 3D fields get wired here alongside the existing ones.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4>The menu pattern you'd reuse</h4>
+    <p><code>VideoSettingsSheet</code> (<code>lib/widgets/video_controls/sheets/video_settings_sheet.dart</code>) is already a multi-view bottom sheet driven by a <code>_SettingsView</code> enum — zoom, playback speed, shader preset, DV conversion, HDR tone mapping all live here as sibling views, not separate toolbar buttons. <code>_buildZoomView()</code> (line 1026, a plain preset list) and the existing <code>_SettingsToggleItem</code> component (lines 157-242, a <code>Pref&lt;bool&gt;</code>-bound switch tile with revert-on-write-failure) are the direct templates for a new <b>Mode</b> + <b>Strength</b> view — no new sheet infrastructure needed, just a new enum case and a <code>_buildThreeDView()</code>.</p>
+  </div>
+
+  <div class="card">
+    <h4>Where the setting would persist</h4>
+    <p><code>ScopedPlayerPrefs.boxFitMode</code> (<code>lib/services/scoped_player_prefs.dart:57-62</code>) is the exact template: a <code>Pref&lt;T&gt;</code> in <code>SettingsService</code>, an <code>EnumPref&lt;PlayerSettingScope&gt;</code> controlling off/global/library/title persistence, resolved through <code>ScopedPlayerPrefs.resolve()</code>. A 3D mode is a good candidate for per-title scope by default — a nature documentary and a screen-recording want very different defaults, and that scoping already exists as a first-class option.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span> Why a shader alone doesn't produce 3D</h2>
+  <p class="lede">The mechanism you'd reach for — mpv's existing GLSL shader chain — is real, working, and exactly wired for this. It's also aimed at the wrong layer of the stack.</p>
+
+  <div class="diagram">
+    <div class="eyebox">
+      <span class="tag bad">✕ what a flat-panel shader gets you</span>
+      <h5>Horizon 2D panel (current architecture)</h5>
+      <div class="panelvis">
+        <div class="half">LEFT HALF</div>
+        <div class="half">RIGHT HALF</div>
+      </div>
+      <div class="eyerow">
+        <div class="eyeicon"><span class="glyph">◉</span>Left eye sees<br>the whole panel</div>
+        <div class="eyeicon"><span class="glyph">◉</span>Right eye sees<br>the same whole panel</div>
+      </div>
+      <p class="note">Horizon composites the Activity's window once and shows it to both eyes identically. An SBS-packed frame just renders as a visibly squashed side-by-side image — both eyes see both halves. No parallax, no depth, arguably worse than the flat original.</p>
+    </div>
+    <div class="eyebox">
+      <span class="tag good">✓ what actually produces depth</span>
+      <h5>Spatial SDK stereo panel (StereoMode.LeftRight)</h5>
+      <div class="panelvis">
+        <div class="half" style="color:#7c9fff">LEFT HALF</div>
+        <div class="half" style="color:#b98cff">RIGHT HALF</div>
+      </div>
+      <div class="eyerow">
+        <div class="eyeicon" style="color:#7c9fff"><span class="glyph">◉</span>Left eye sees<br><b>only</b> the left half</div>
+        <div class="eyeicon" style="color:#b98cff"><span class="glyph">◉</span>Right eye sees<br><b>only</b> the right half</div>
+      </div>
+      <p class="note">The compositor itself is told the surface is stereo-packed and splits it per eye. This split only exists on a panel registered through the Meta Spatial SDK — a plain Android <code>SurfaceView</code>, which is what Quest playback uses today, has no such mode.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4>Confirmed against your actual rendering pipeline</h4>
+    <p>Quest video today: <code>MpvPlayerCore.kt</code> writes decoded frames to a plain <code>SurfaceView</code> in a normal <code>FrameLayout</code> — either directly (<code>vo=mediacodec</code>, hardware plane, no GPU pass) or through GLES (<code>vo=gpu</code>) whenever mpv's <code>glsl-shaders</code> property is non-empty. <code>GpuVoPolicy.kt</code> already auto-switches the session onto the GPU path the instant a shader is appended (<code>REASON_SHADERS</code>) — so the plumbing to run a custom GLSL pass on every frame is live and proven (it's how ArtCNN/NVScaler/Anime4K upscaling already ships). But that GPU pass renders into the same flat <code>SurfaceView</code>. Nothing downstream of it knows the output is stereo-packed. <code>android/quest/src/main/AndroidManifest.xml</code> explicitly omits <code>com.oculus.intent.category.VR</code> and headtracking features — by design, confirmed in <code>QUEST_BUILD.md</code> lines 1-6 and the manifest's own comments — which is precisely what keeps Horizon from ever offering a stereo panel mode to this app.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span> This isn't hypothetical — a sibling project already hit this wall</h2>
+  <p class="lede">Holoplex (a related Quest media client in project memory) built the Spatial SDK immersive path first, then tore it out. The failure modes are on record and worth internalizing before scoping this.</p>
+
+  <div class="card">
+    <h4>What Holoplex tried and reverted (2026-08-26 pivot)</h4>
+    <p>Holoplex ran as <code>AppSystemActivity</code> (Meta XR's immersive host) with <code>ComposeViewPanelRegistration</code>, <code>IsdkGrabbable</code>/<code>IsdkPanelResize</code> for native grab/move/scale, and — directly relevant here — <code>VideoSurfacePanelRegistration</code> for direct-to-surface media playback. It was deleted wholesale. Recorded reasons:</p>
+    <table>
+      <tr><th>Symptom</th><th>Root cause</th></tr>
+      <tr><td>System keyboard (incl. dictation mic) never rendered over the panel</td><td>Spatial panels live on virtual displays 41/43; the <code>keyboardv2</code> IME only binds to display 0</td></tr>
+      <tr><td>On-device speech recognition errored instantly</td><td><code>SpeechRecognizer</code> models require a download Horizon's immersive sandbox didn't resolve</td></tr>
+      <tr><td>Panels intermittently loaded upside-down</td><td>Unresolved Spatial SDK panel-orientation bug, not tied to any one code path</td></tr>
+      <tr><td><code>BackHandler</code> crashed app-wide</td><td><code>AppSystemActivity</code> isn't a <code>ComponentActivity</code>, so Compose had no <code>OnBackPressedDispatcherOwner</code> — needed a hand-rolled provider to work around it</td></tr>
+    </table>
+    <p style="margin-top:12px">Holoplex's own durable-memory verdict: <i>"for a fundamentally 2D browsing/media app, use a standard launcher activity."</i> Plezy-quest already made that call from the start — this is independent confirmation it was the right one for the app as a whole.</p>
+  </div>
+
+  <div class="card">
+    <h4>Why this doesn't kill the idea — it scopes it</h4>
+    <p>Holoplex's regressions came from making the <b>entire app</b> immersive — browsing, search, text entry, the works — live on Spatial SDK panels permanently. The keyboard and speech-recognition failures specifically hit UI you'd only need while <i>typing</i, i.e. browsing screens, not a video player that's actively playing. A design that keeps Plezy's main window exactly as it is today (plain 2D panel, full keyboard/snap/dictation support intact) and drops into a Spatial SDK surface <i>only</i> for the seconds the user has 3D mode turned on during playback sidesteps most of that failure list by construction. The one item that doesn't obviously go away is the upside-down-panel bug — that's a platform-level Spatial SDK defect, not an artifact of Holoplex's specific screen graph, and it needs to be re-validated early on real hardware before betting the feature on it.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">4</span> The actual technical shape of a working feature</h2>
+  <p class="lede">Two independent problems hide inside "make it 3D": <b>(a)</b> getting Horizon to render a stereo-packed frame per-eye at all, and <b>(b)</b> producing a stereo-packed frame from 2D source material that was never shot in 3D. Neither is optional; source content in a Plex/Jellyfin library is overwhelmingly flat 2D.</p>
+
+  <div class="options">
+    <div class="opt reject">
+      <span class="badge">REJECT</span>
+      <h4>A · Flat-panel SBS shader only</h4>
+      <p>Add an SBS/depth GLSL shader to <code>ShaderService</code>, ship it as a new <code>ShaderPresetType</code>, done in days.</p>
+      <ul>
+        <li>Uses infrastructure that already exists and already works</li>
+        <li>Produces zero stereo depth on-device — see §2</li>
+        <li>Would ship a feature that visibly does nothing but squash the image</li>
+      </ul>
+    </div>
+    <div class="opt pick">
+      <span class="badge">RECOMMENDED</span>
+      <h4>B · Immersive "3D Theater" side-mode</h4>
+      <p>A second, short-lived Activity/module (parallel to <code>android/quest</code>) that adopts the Spatial SDK <i>only</i> for this one surface, entered on toggle and exited back to the flat panel on close.</p>
+      <ul>
+        <li>Main app, browsing, keyboard, snap points: completely untouched</li>
+        <li><code>ReadableVideoSurfacePanelRegistration</code> accepts a plain Android <code>Surface</code> — mpv's existing decode path plugs straight in, no ExoPlayer migration needed</li>
+        <li><code>MediaPanelRenderOptions.stereoMode</code> gives real per-eye split for content already mastered in 3D, free of any depth conversion</li>
+        <li>Real, scoped engineering effort — new Gradle module, playback handoff, lifecycle testing</li>
+      </ul>
+    </div>
+    <div class="opt reject">
+      <span class="badge">N/A HERE</span>
+      <h4>C · <code>mpv --vf=stereo3d</code> anaglyph</h4>
+      <p>mpv's built-in filter can convert SBS/OU sources to red-cyan anaglyph 3D — a real, zero-architecture-risk option.</p>
+      <ul>
+        <li>Works today on the flat panel with no Spatial SDK at all</li>
+        <li>Needs physical red-cyan glasses — meaningless inside a headset that already has stereo optics per eye</li>
+        <li>Worth knowing about for the Fire TV build, irrelevant to Quest</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4>Path B, concretely</h4>
+    <table>
+      <tr><th>Piece</th><th>Detail</th></tr>
+      <tr><td><b>New module</b></td><td>A Gradle module alongside <code>android/quest</code>, this one pulling in <code>com.meta.spatial:*</code> (the aliases already sit unused in <code>gradle/libs.versions.toml</code> per the Holoplex removal — same coordinates apply here). QUEST_BUILD.md's env-var-switch idiom (no product flavors) extends cleanly to a third `THEATER_MODE` gate.</td></tr>
+      <tr><td><b>Host activity</b></td><td>A minimal <code>AppSystemActivity</code> hosting exactly one panel: the video surface, plus a small in-scene play/pause/exit affordance. No browsing UI, no text input ever touches this screen — the surface area where Holoplex's keyboard/SpeechRecognizer bugs lived doesn't exist here.</td></tr>
+      <tr><td><b>Handoff</b></td><td>Flutter → native platform channel passes the current stream URL/headers, playback position, selected audio/subtitle track, and 3D mode+strength when the user opens theater mode; native hands position back on exit so mpv resumes the flat panel at the same point.</td></tr>
+      <tr><td><b>Decode path</b></td><td><code>ReadableVideoSurfacePanelRegistration</code> (the variant built for post-processing, vs. the plain <code>VideoSurfacePanelRegistration</code>) hands you the <code>Surface</code> before final composite — mpv's <code>MpvPlayerCore</code> targets that <code>Surface</code> exactly as it targets today's <code>SurfaceView</code>, and mpv's existing shader chain (for depth conversion, §5) still runs upstream of it.</td></tr>
+      <tr><td><b>Stereo signal</b></td><td><code>MediaPanelRenderOptions.stereoMode</code> = <code>LeftRight</code>/<code>UpDown</code>/<code>None</code> per the user's Mode selection — set once per playback session based on source metadata or user override.</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">5</span> Where the "3D" pixels come from</h2>
+  <p class="lede">Two very different content cases need two very different answers, and conflating them is the most common way this kind of feature disappoints.</p>
+
+  <table>
+    <tr><th>Source</th><th>Approach</th><th>Effort</th><th>Quality</th></tr>
+    <tr>
+      <td><b>Already-3D movies</b> (SBS/HSBS/OU masters, common for Plex "3D" tagged libraries)</td>
+      <td>No conversion at all — just set <code>stereoMode</code> to match the file's real packing and let the panel split it per-eye</td>
+      <td><span class="pill good">Low</span></td>
+      <td><span class="pill good">Real stereo</span></td>
+    </tr>
+    <tr>
+      <td><b>Ordinary flat 2D</b> (the overwhelming majority of any Plex/Jellyfin library)</td>
+      <td>Synthesize a depth map, then displace pixels per-eye by depth × strength before packing SBS</td>
+      <td><span class="pill warn">High</span></td>
+      <td><span class="pill mid">Approximate</span></td>
+    </tr>
+  </table>
+
+  <div class="card">
+    <h4>Depth-map generation for the 2D case — the part nobody ships casually</h4>
+    <p>mpv has no built-in monocular depth estimation, and there's no real prior art for doing it live inside a GLSL <code>//!HOOK</code> shader — the community consensus (confirmed via current research into tools like VisionDepth3D / IW3 / Owl3D) is that real depth conversion runs an AI model (MiDaS / Depth Anything V2) as a <i>separate offline pass</i>, not a live player-side shader. Two tiers worth knowing apart:</p>
+    <table>
+      <tr><th></th><th>Heuristic pseudo-depth (GLSL only)</th><th>On-device ML depth (Depth-Anything-class model)</th></tr>
+      <tr><td><b>How</b></td><td>Fake a depth cue from image statistics already visible to a shader — blur amount, vertical position, edge density, luminance gradient — then shift pixels by that proxy × strength</td><td>Run a small monocular depth network per frame (or every Nth frame with temporal smoothing) via NNAPI/GPU delegate, feed the depth texture into the same displacement shader</td></tr>
+      <tr><td><b>Fits existing infra?</b></td><td>Yes — same <code>ShaderService.applyPreset()</code> path as ArtCNN/NVScaler today; "strength" is a genuine uniform/regenerated-shader parameter, same trick <code>ambient_lighting_service.dart</code> already uses for a runtime-generated shader</td><td>No — needs a new native inference pipeline (model conversion + quantization + NNAPI or GPU delegate integration) that nothing in this codebase does today; XR2 Gen2's mobile budget makes full-res, full-framerate inference a real constraint, likely forcing reduced resolution/framerate or aggressive temporal caching</td></tr>
+      <tr><td><b>Quality</b></td><td>Community-documented as "cardboard cutout" — flat depth planes, comfortable but not convincing, exactly why serious 2D-to-3D tools moved away from live heuristics years ago</td><td>Meaningfully better, genuinely scene-aware depth; the actual bar every dedicated 2D-to-3D converter targets</td></tr>
+      <tr><td><b>Scope</b></td><td>Days, once Path B's stereo panel exists</td><td>Its own multi-week project — treat as a distinct follow-on, not part of a v1</td></tr>
+    </table>
+    <p style="margin-top:10px">Recommended sequencing: ship real-3D-passthrough + the heuristic shader together as v1 (both ride on the same stereo-panel plumbing and the same <code>ShaderService</code> mechanism), and treat ML-based depth as an explicit v2 decision made after v1 is validated on-device — not a silent scope-creep item bolted onto the first release.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">6</span> Proposed UI</h2>
+  <p class="lede">Same visual language as the existing settings sheet — no new sheet chrome, no new interaction pattern, just a new view and a repurposed button slot.</p>
+
+  <div class="mock">
+    <div class="screen">
+      <div class="sheet">
+        <h6>3D Mode</h6>
+        <div class="seg"><div>Off</div><div class="on">Auto</div><div>SBS</div><div>OU</div></div>
+        <div class="slider-row">
+          <div class="lbl"><span>Strength</span><b>58%</b></div>
+          <div class="track"><div class="fill"></div><div class="knob"></div></div>
+        </div>
+      </div>
+      <div class="bar">
+        <div class="btn"><div class="g">⏮</div>Chapters</div>
+        <div class="btn"><div class="g">▭</div>Fit</div>
+        <div class="btn active"><div class="g">◧◨</div>3D</div>
+        <div class="btn"><div class="g">⚙</div>Settings</div>
+      </div>
+    </div>
+    <div class="caption">Mock of the control row with the fullscreen slot repurposed as a "3D" toggle, opening a menu view inside the existing <code>VideoSettingsSheet</code> — Mode segmented control (Off / Auto-detect / Force SBS / Force OU) + Strength slider, mirroring <code>_buildZoomView()</code>'s preset-list layout and the existing slider components used elsewhere in the sheet.</div>
+  </div>
+
+  <div class="card">
+    <h4>Wiring summary</h4>
+    <table>
+      <tr><td style="width:230px"><code>track_chapter_controls.dart:356-372</code></td><td>Fullscreen icon/handler → 3D icon (e.g. <code>Symbols.view_in_ar_rounded</code>) that opens <code>VideoSettingsSheet</code> to a new <code>_SettingsView.threeD</code>, instead of calling a fullscreen toggle. Button visibility gate changes from desktop-only to "3D-capable build" (Quest theater-mode present).</td></tr>
+      <tr><td><code>track_controls_state.dart</code></td><td><code>isFullscreen</code>/<code>onToggleFullscreen</code> → <code>is3DActive</code> / <code>onOpen3DMenu</code>.</td></tr>
+      <tr><td><code>video_settings_sheet.dart</code></td><td>New <code>_SettingsView.threeD</code> case + <code>_buildThreeDView()</code>: segmented mode control + strength slider, modeled directly on <code>_buildZoomView()</code> and <code>_SettingsToggleItem</code>.</td></tr>
+      <tr><td><code>models/shader_preset.dart</code> / <code>scoped_player_prefs.dart</code></td><td>New <code>ThreeDConfig{mode, strength}</code> persisted via a new <code>ScopedPlayerPrefs.threeDMode</code>/<code>.threeDStrength</code> pair, following the <code>boxFitMode</code> template — per-title scope by default.</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">7</span> Risk register</h2>
+  <div class="risklist">
+    <div class="risk"><div class="lvl high">HIGH</div><div class="body"><b>Spatial SDK panel orientation bug (upside-down load)</b><p>Recorded in Holoplex as intermittent and unresolved at the platform level, not tied to their specific screen graph. Validate on real Quest 3 hardware in a throwaway spike before committing engineering time to the full theater-mode build.</p></div></div>
+    <div class="risk"><div class="lvl med">MED</div><div class="body"><b>Enter/exit transition feel</b><p>Handing off playback position, tracks, and decode state between the flat mpv surface and the Spatial panel's surface needs to be seamless (sub-second, no re-buffer) or the feature will feel broken even when the 3D itself works. Budget explicit spike time for this handoff before UI polish.</p></div></div>
+    <div class="risk"><div class="lvl med">MED</div><div class="body"><b>Heuristic depth quality expectations</b><p>Community consensus (VisionDepth3D/IW3-class tools) is that live heuristic pseudo-depth looks like flat cutout layers, not real depth. Set that expectation explicitly in any release notes — "3D Auto" on ordinary 2D content is a comfort feature, not cinema-grade conversion.</p></div></div>
+    <div class="risk"><div class="lvl low">LOW</div><div class="body"><b>Fire TV build divergence</b><p>None of this touches the Fire TV target — Spatial SDK and stereo panels are Horizon-only. Keep the new module strictly under a Quest-only build gate, same pattern as <code>android/quest</code> today.</p></div></div>
+    <div class="risk"><div class="lvl low">LOW</div><div class="body"><b>Upstream rebase surface</b><p>A new Quest-only module and a new settings-sheet view are both new files/new enum cases — they don't touch any of the six upstream files QUEST_BUILD.md tracks as the fork's conflict surface, so this stays a clean addition rather than a modification.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">8</span> Suggested phasing</h2>
+  <div class="timeline">
+    <div class="tl-item">
+      <h4>Phase 0 — De-risk the platform bet <span class="size">1-2 days</span></h4>
+      <p>Throwaway Spatial SDK spike: register one <code>ReadableVideoSurfacePanelRegistration</code> panel, feed it a static SBS test pattern, confirm on a real Quest 3 that (a) it renders right-side-up reliably across multiple launches, and (b) exiting back to the flat 2D activity leaves the main app undisturbed. This is the single fact that determines whether Path B is buildable at all.</p>
+    </div>
+    <div class="tl-item">
+      <h4>Phase 1 — Real-3D passthrough <span class="size">1-2 weeks</span></h4>
+      <p>Theater-mode Activity + handoff plumbing + <code>stereoMode</code> wired to source metadata/user override. Ships genuine stereo depth for any already-3D file in the library — the highest-value, lowest-risk slice, with zero synthetic depth involved.</p>
+    </div>
+    <div class="tl-item">
+      <h4>Phase 2 — Heuristic 2D→3D + UI <span class="size">3-5 days</span></h4>
+      <p>Displacement GLSL shader with a strength uniform, the <code>VideoSettingsSheet</code> Mode/Strength view, and the repurposed player button, all landing on top of Phase 1's stereo panel.</p>
+    </div>
+    <div class="tl-item">
+      <h4>Phase 3 — ML depth (optional follow-on) <span class="size">Separate multi-week project</span></h4>
+      <p>Only after Phase 1-2 are validated on-device and the strength/UX model is proven out. Scope, model choice, and performance budget deserve their own dedicated design pass rather than riding along with the initial release.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">9</span> Sources</h2>
+  <div class="card sources">
+    <ul>
+      <li>Repo ground truth: <code>QUEST_BUILD.md</code>, <code>android/quest/src/main/AndroidManifest.xml</code>, <code>lib/quest/quest_platform.dart</code>, <code>lib/services/shader_service.dart</code>, <code>android/app/src/main/kotlin/com/edde746/plezy/mpv/{MpvPlayerCore,GpuVoPolicy}.kt</code>, <code>lib/widgets/video_controls/**</code>, <code>lib/services/scoped_player_prefs.dart</code></li>
+      <li>Project memory (OpenViking): Holoplex <code>Meta SDK.md</code> API reference, <code>architecture-pivot-to-native-2d-panel-app.md</code>, <code>architecture-ground-truth.md</code> — the sibling project's Spatial SDK removal and its recorded causes</li>
+      <li>Meta Horizon developer docs: <a href="https://developers.meta.com/horizon/documentation/spatial-sdk/spatial-sdk-media-playback/">Spatial SDK media playback</a> (<code>VideoSurfacePanelRegistration</code>, <code>ReadableVideoSurfacePanelRegistration</code>, <code>MediaPanelRenderOptions.stereoMode</code>), <a href="https://developers.meta.com/horizon/discover/2d-apps-meta-spatial/">2D apps → Spatial SDK progressive enhancement</a>, <a href="https://developers.meta.com/horizon/reference/spatial-sdk/v0.7.0/root/com.meta.spatial.runtime/stereo-mode/">StereoMode reference</a></li>
+      <li>mpv/community: <a href="https://libplacebo.org/custom-shaders/">libplacebo custom shaders</a> (mpv <code>//!HOOK</code> GLSL model), mpv's built-in <code>--vf=stereo3d</code> anaglyph filter, and current tooling for offline AI 2D→3D conversion (VisionDepth3D, IW3/nunif, Depth Anything V2) as the community-standard alternative to live shader-based depth guessing</li>
+    </ul>
+  </div>
+</section>
+
+<footer>Compiled from live repository inspection, project memory, and current Meta/mpv documentation — no code changed as part of this research pass.</footer>
+
+</div>
+</body>
+</html>
