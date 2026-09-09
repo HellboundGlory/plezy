@@ -50,5 +50,12 @@ dependencies {
   implementation("com.meta.spatial:meta-spatial-sdk-toolkit:$metaSpatialSdkVersion")
   implementation("com.meta.spatial:meta-spatial-sdk-vr:$metaSpatialSdkVersion")
 
+  // SystemDAG's topological sort reflects on registered system classes
+  // (FollowableSystem, InputSystem, ...) via kotlin-reflect; without it on
+  // the runtime classpath every lookup returns the stub "(Kotlin reflection
+  // is not available)" and the sort fails as if those systems were never
+  // registered at all, even though VRFeature did register them.
+  implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
+
   testImplementation("junit:junit:4.13.2")
 }

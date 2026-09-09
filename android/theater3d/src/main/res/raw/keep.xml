@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Meta Spatial SDK's AppSystemActivity loads @drawable/dot_cursor by name
+  (BitmapFactory.decodeResource), which AAPT's static reference scan cannot
+  see, so release's resource shrinker strips it and Theater3DActivity
+  crashes on launch with "BitmapFactory.decodeResource returned null for
+  dot_cursor".
+-->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/dot_cursor" />

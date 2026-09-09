@@ -82,8 +82,11 @@ import '../utils/platform_detector.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
 import '../utils/stream_buffer_sizing.dart';
+import '../utils/stereo_source_detector.dart';
 import '../utils/video_player_navigation.dart';
 import '../utils/android_exit_diagnostics.dart';
+import '../models/shader_preset.dart';
+import '../quest/theater3d_bridge.dart';
 import 'video_player/completion_latch.dart';
 import 'video_player/episode_session_state.dart';
 import 'video_player/first_frame_gate.dart';
@@ -133,6 +136,7 @@ part 'video_player/parts/playback_services.dart';
 part 'video_player/parts/playback_start.dart';
 part 'video_player/parts/seeking.dart';
 part 'video_player/parts/build.dart';
+part 'video_player/parts/theater3d.dart';
 part 'video_player/parts/watch_together.dart';
 
 final WakelockController _wakelockController = WakelockController();
@@ -472,6 +476,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   AudioTrack? _preferredAudioTrack;
   SubtitlePreference? _preferredSubtitleTrack;
   SubtitlePreference? _preferredSecondarySubtitleTrack;
+
+  /// Last URL/headers passed to [player]'s own `open()` (see
+  /// `_openMediaOnPlayer` in playback_open.dart) -- reused by theater mode.
+  String? _lastOpenedVideoUrl;
+  Map<String, String>? _lastOpenedHeaders;
 
   /// Last explicit track choices made on this screen. They survive in-place
   /// reloads but not route replacement. Automatic selections never overwrite

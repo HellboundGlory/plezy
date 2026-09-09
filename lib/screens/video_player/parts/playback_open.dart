@@ -723,6 +723,10 @@ extension _VideoPlayerOpenMethods on VideoPlayerScreenState {
     );
     if (shouldContinue != null && !shouldContinue()) return const _MediaOpenResult(didOpen: false);
 
+    // Reused by theater mode -- see theater3d.dart.
+    _lastOpenedVideoUrl = videoUrl;
+    _lastOpenedHeaders = headers;
+
     final media = Media(videoUrl, start: timing.mediaStart, headers: headers);
     final sidecarOpenGuard = MpvSidecarOpenGuard.armIfNeeded(player: player, subtitles: externalSubtitlesAtOpen);
     Future<void> openMedia({required bool shouldPlay, List<SubtitleTrack>? externalSubtitles}) {

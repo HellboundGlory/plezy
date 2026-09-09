@@ -636,6 +636,9 @@ class PlexVideoControls extends StatefulWidget {
   /// Called when shader preset changes
   final VoidCallback? onShaderChanged;
 
+  /// Enters theater mode for a picked 3D mode/strength (PLAN_3D.md Phase 2).
+  final Future<void> Function(ThreeDMode mode, double strength)? onThreeDModeSelected;
+
   /// Optional callback that returns thumbnail image bytes for a given timestamp.
   final ScrubFrame? Function(Duration time)? thumbnailDataBuilder;
 
@@ -737,6 +740,7 @@ class PlexVideoControls extends StatefulWidget {
     required this.chromeController,
     this.shaderService,
     this.onShaderChanged,
+    this.onThreeDModeSelected,
     this.thumbnailDataBuilder,
     this.isLive = false,
     this.liveChannelName,

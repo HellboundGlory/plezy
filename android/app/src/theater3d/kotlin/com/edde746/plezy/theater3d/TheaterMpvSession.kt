@@ -47,7 +47,14 @@ class TheaterMpvSession(
       Log.w(TAG, "onSurfaceReady called twice; ignoring")
       return
     }
-    val playerCore = MpvPlayerCore(context = activity, headless = true)
+    // vo=mediacodec's autoconvert hwupload step fails against this
+    // compositor-owned Surface regardless of panel registration type
+    // ("Failed to create HW uploader for format yuv420p" / "Could not
+    // initialize video chain", confirmed on-device with both
+    // VideoSurfacePanelRegistration and ReadableVideoSurfacePanelRegistration).
+    // hardwareDecoding=false selects vo=gpu,gpu-next from the start instead
+    // of after a failed mediacodec attempt.
+    val playerCore = MpvPlayerCore(context = activity, headless = true, hardwareDecoding = false)
     playerCore.delegate = this
     core = playerCore
     attachedSurface = surface
@@ -125,7 +132,20 @@ class TheaterMpvSession(
     }
   }
 
-  override fun onEvent(name: String, data: Map<String, Any>?) = Unit
+  override fun onEvent(name: String, data: Map<String, Any>?) {
+    // The flat player forwards this to Dart, which prints it; a headless
+    // session has no MethodChannel listener, so without this the mpv-side
+    // vo=gpu/EGL diagnostics for a black-screen session are invisible.
+    if (name != "log-message") return
+    val level = data?.get("level") as? String ?: "info"
+    val prefix = data?.get("prefix") as? String ?: "mpv"
+    val text = data?.get("text") as? String ?: return
+    when (level) {
+      "fatal", "error" -> Log.e(TAG, "[$prefix] $text")
+      "warn" -> Log.w(TAG, "[$prefix] $text")
+      else -> Log.d(TAG, "[$prefix] $text")
+    }
+  }
 
   private fun handleExit() {
     if (!ended.compareAndSet(false, true)) return

@@ -1094,6 +1094,11 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
       _threeDMode = mode;
     });
     unawaited(ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDMode, _state.metadata, mode.index));
+    if (mode == ThreeDMode.off) return;
+    final onThreeDModeSelected = _state.onThreeDModeSelected;
+    if (onThreeDModeSelected == null) return;
+    unawaited(onThreeDModeSelected(mode, _threeDStrength));
+    OverlaySheetController.of(context).close();
   }
 
   void _previewThreeDStrength(double value) {

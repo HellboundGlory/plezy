@@ -229,6 +229,7 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       onToggleRotationLock: _toggleRotationLock,
       onToggleScreenLock: _toggleScreenLock,
       onOpen3DMenu: _openThreeDMenu,
+      onThreeDModeSelected: widget.onThreeDModeSelected,
       onToggleAlwaysOnTop: onToggleAlwaysOnTop,
       onSwitchVersion: versionQuality.canSwitch ? (i) => _switchVersionAndQuality(newMediaIndex: i) : null,
       onSwitchQualityPreset: versionQuality.canSwitch ? (p) => _switchVersionAndQuality(newPreset: p) : null,

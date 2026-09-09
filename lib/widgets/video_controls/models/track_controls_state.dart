@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../media/media_item.dart';
 import '../../../media/media_version.dart';
 import '../../../media/media_source_info.dart';
+import '../../../models/shader_preset.dart';
 import '../../../models/transcode_quality_preset.dart';
 import '../../../mpv/mpv.dart';
 import '../../../services/playback_initialization_types.dart';
@@ -53,6 +54,9 @@ class TrackControlsState {
   /// Opens the Quest 3D settings view (see PLAN_3D.md Phase 2). Null when
   /// theater mode isn't available on this build/device.
   final VoidCallback? onOpen3DMenu;
+
+  /// Enters theater mode for a picked 3D mode/strength (PLAN_3D.md Phase 2).
+  final Future<void> Function(ThreeDMode mode, double strength)? onThreeDModeSelected;
   final VoidCallback? onToggleAlwaysOnTop;
   final Function(int)? onSwitchVersion;
   final ValueChanged<TranscodeQualityPreset>? onSwitchQualityPreset;
@@ -121,6 +125,7 @@ class TrackControlsState {
     this.onToggleRotationLock,
     this.onToggleScreenLock,
     this.onOpen3DMenu,
+    this.onThreeDModeSelected,
     this.onToggleAlwaysOnTop,
     this.onSwitchVersion,
     this.onSwitchQualityPreset,

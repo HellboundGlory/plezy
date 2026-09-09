@@ -3,22 +3,27 @@ package com.edde746.plezy.theater3d
 import android.view.Surface
 import com.meta.spatial.core.Entity
 import com.meta.spatial.runtime.StereoMode
+import com.meta.spatial.toolkit.MediaPanelRenderOptions
+import com.meta.spatial.toolkit.MediaPanelSettings
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelStyleOptions
 import com.meta.spatial.toolkit.PixelDisplayOptions
 import com.meta.spatial.toolkit.QuadShapeOptions
-import com.meta.spatial.toolkit.ReadableMediaPanelRenderOptions
-import com.meta.spatial.toolkit.ReadableMediaPanelSettings
-import com.meta.spatial.toolkit.ReadableVideoSurfacePanelRegistration
+import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 
 /**
  * Builds the [PanelRegistration] for the theater's video panel: a
- * [ReadableVideoSurfacePanelRegistration], which -- unlike the plain
- * `VideoSurfacePanelRegistration` -- hands back a raw [Surface] the way
- * Phase 0's spike proved out on-device, and is the variant Phase 2's
- * shader needs to post-process frames before they hit the panel (confirmed
- * supported for exactly this purpose in the Spatial SDK docs).
+ * [VideoSurfacePanelRegistration]. The `Readable` variant was tried first
+ * (for Phase 2's future post-process shader) but its surface rejects
+ * direct MediaCodec hwdec output -- mpv's mediacodec vo fails with
+ * "Failed to create HW uploader for format yuv420p" / "Could not
+ * initialize video chain" against it, falls back to vo=gpu, and even that
+ * renders nothing visible (black panel, audio still playing) -- confirmed
+ * on-device. `VideoSurfacePanelRegistration` is what the official
+ * `MediaPlayerSample` uses and is the direct-hwdec-output surface type.
+ * Phase 2's shader post-process will need a different mechanism against
+ * this registration type.
  *
  * Real per-eye stereo comes entirely from [StereoModeResolver]: mpv
  * decodes the source's already-combined SBS/OU frame untouched into this
@@ -47,14 +52,14 @@ object Theater3DPanel {
     onSurface: (entity: Entity, surface: Surface) -> Unit
   ): PanelRegistration {
     val stereoMode: StereoMode = StereoModeResolver.resolve(stereoModeRaw)
-    return ReadableVideoSurfacePanelRegistration(
+    return VideoSurfacePanelRegistration(
       registrationId,
       { entity, surface -> onSurface(entity, surface) },
       { _ ->
-        ReadableMediaPanelSettings(
+        MediaPanelSettings(
           shape = QuadShapeOptions(WIDTH_METERS, HEIGHT_METERS),
           display = PixelDisplayOptions(PANEL_PIXEL_WIDTH, PANEL_PIXEL_HEIGHT),
-          rendering = ReadableMediaPanelRenderOptions().copy(stereoMode = stereoMode),
+          rendering = MediaPanelRenderOptions(isDRM = false, stereoMode = stereoMode),
           style = PanelStyleOptions(),
           input = PanelInputOptions()
         )

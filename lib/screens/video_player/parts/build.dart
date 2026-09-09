@@ -328,6 +328,7 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                         shaderService: _shaderService,
                         // ignore: no-empty-block - state update triggers rebuild to reflect shader change
                         onShaderChanged: () => _setPlayerState(() {}),
+                        onThreeDModeSelected: _launchTheaterMode,
                         thumbnailDataBuilder: _scrubPreviewSource?.isAvailable == true ? _getThumbnailData : null,
                         isLive: widget.isLive,
                         liveChannelName: _live.channelName,

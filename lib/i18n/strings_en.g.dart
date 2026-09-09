@@ -2141,6 +2141,9 @@ class Translations$videoControls$en {
 	/// en: 'Picture-in-picture failed to start'
 	String get pipFailed => 'Picture-in-picture failed to start';
 
+	/// en: '3D theater mode failed to start: ${reason}'
+	String theaterModeFailed({required Object reason}) => '3D theater mode failed to start: ${reason}';
+
 	/// en: 'Screenshot saved'
 	String get screenshotSaved => 'Screenshot saved';
 
@@ -7723,6 +7726,7 @@ extension on Translations {
 			'videoControls.endsAt' => ({required Object time}) => 'Ends at ${time}',
 			'videoControls.pipActive' => 'Playing in Picture-in-Picture',
 			'videoControls.pipFailed' => 'Picture-in-picture failed to start',
+			'videoControls.theaterModeFailed' => ({required Object reason}) => '3D theater mode failed to start: ${reason}',
 			'videoControls.screenshotSaved' => 'Screenshot saved',
 			'videoControls.zoomPercent' => ({required Object percent}) => 'Zoom ${percent}%',
 			'videoControls.pipErrors.androidVersion' => 'Requires Android 8.0 or newer',
@@ -8065,9 +8069,9 @@ extension on Translations {
 			'libraries.noCollections' => 'No collections in this library',
 			'libraries.noFoldersFound' => 'No folders found',
 			'libraries.folders' => 'folders',
-			'libraries.tabs.recommended' => 'Recommended',
 			_ => null,
 		} ?? switch (path) {
+			'libraries.tabs.recommended' => 'Recommended',
 			'libraries.tabs.browse' => 'Browse',
 			'libraries.tabs.collections' => 'Collections',
 			'libraries.tabs.playlists' => 'Playlists',
@@ -8579,9 +8583,9 @@ extension on Translations {
 			'downloads.queuedFilesTooltip' => ({required Object files}) => 'Queued ${files}',
 			'downloads.downloadingTooltip' => 'Downloading...',
 			'downloads.downloadingFilesTooltip' => ({required Object files}) => 'Downloading ${files}',
-			'downloads.noDownloadsTree' => 'No downloads',
 			_ => null,
 		} ?? switch (path) {
+			'downloads.noDownloadsTree' => 'No downloads',
 			'downloads.pauseAll' => 'Pause all',
 			'downloads.resumeAll' => 'Resume all',
 			'downloads.deleteAll' => 'Delete all',

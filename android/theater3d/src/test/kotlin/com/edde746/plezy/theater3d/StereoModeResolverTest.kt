@@ -25,9 +25,14 @@ class StereoModeResolverTest {
   }
 
   @Test
+  fun `synthetic maps to LeftRight`() {
+    assertEquals(StereoMode.LeftRight, StereoModeResolver.resolve("synthetic"))
+  }
+
+  @Test
   fun `unknown mode throws`() {
     assertThrows(IllegalArgumentException::class.java) {
-      StereoModeResolver.resolve("synthetic")
+      StereoModeResolver.resolve("bogus")
     }
   }
 }

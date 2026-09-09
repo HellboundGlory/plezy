@@ -724,6 +724,7 @@
     "endsAt": "Ends at ${time}",
     "pipActive": "Playing in Picture-in-Picture",
     "pipFailed": "Picture-in-picture failed to start",
+    "theaterModeFailed": "3D theater mode failed to start: ${reason}",
     "screenshotSaved": "Screenshot saved",
     "zoomPercent": "Zoom ${percent}%",
     "pipErrors": {

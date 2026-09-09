@@ -75,8 +75,18 @@ class Theater3DActivity : AppSystemActivity() {
   private var finishing = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
     val session = Theater3DBridge.takePendingSession()
+    // AppSystemActivity.onCreate() calls registerPanels() synchronously
+    // (twice) as part of super.onCreate() itself, before this method's own
+    // body would otherwise run -- request/listener must already be set
+    // when that happens or registerPanels()'s `request ?: return
+    // emptyList()` guard silently registers nothing and every panel
+    // creation crashes with "No panel creator found".
+    if (session != null) {
+      request = session.first
+      listener = session.second
+    }
+    super.onCreate(savedInstanceState)
     if (session == null) {
       // Relaunched with no session pending -- Theater3DBridge's listener is
       // a same-process static, not something a killed-and-restarted
@@ -87,21 +97,27 @@ class Theater3DActivity : AppSystemActivity() {
       finish()
       return
     }
-    request = session.first
-    listener = session.second
   }
 
-  override fun registerSystemFeatures(): List<SpatialFeature> = listOf(VRFeature(this))
+
+  // Matches the Phase 0 spike's proven-working configuration exactly
+  // (recovered from that session's transcript after the spike directory
+  // was deleted) -- plain VRFeature(this), no explicit inputSystemType.
+  override fun registerFeatures(): List<SpatialFeature> = listOf(VRFeature(this))
 
   override fun registerPanels(): List<PanelRegistration> {
     val req = request ?: return emptyList()
+    Log.i(TAG, "registerPanels: building registrations for stereoMode=${req.stereoMode}")
     return try {
-      listOf(
+      val regs = listOf(
         Theater3DPanel.registration(VIDEO_PANEL_REGISTRATION_ID, req.stereoMode) { _, surface ->
+          Log.i(TAG, "Video panel surfaceConsumer fired: surface=$surface")
           listener?.onSurfaceReady(surface, Theater3DPanel.PANEL_PIXEL_WIDTH, Theater3DPanel.PANEL_PIXEL_HEIGHT)
         },
         buildControlsPanelRegistration()
       )
+      Log.i(TAG, "registerPanels: built ${regs.size} registrations")
+      regs
     } catch (e: Exception) {
       Log.e(TAG, "Failed to register theater panels", e)
       failAndFinish(e.message ?: "panel registration failed")
@@ -111,6 +127,7 @@ class Theater3DActivity : AppSystemActivity() {
 
   override fun onSceneReady() {
     super.onSceneReady()
+    Log.i(TAG, "onSceneReady: finishing=$finishing request=${request != null}")
     if (finishing) return
     if (request == null) return
 
@@ -118,21 +135,24 @@ class Theater3DActivity : AppSystemActivity() {
       val reportedEyeHeight = scene.getViewerPose().t.y
       val eyeHeight = if (reportedEyeHeight < MIN_PLAUSIBLE_EYE_HEIGHT_M) FALLBACK_EYE_HEIGHT_M else reportedEyeHeight
       val identity = Quaternion(0f, 0f, 0f)
+      Log.i(TAG, "onSceneReady: reportedEyeHeight=$reportedEyeHeight eyeHeight=$eyeHeight")
 
       videoEntity = Entity.create(
-        Transform(Pose(Vector3(0f, eyeHeight, -PANEL_DISTANCE_M), identity)),
+        Transform(Pose(Vector3(0f, eyeHeight, PANEL_DISTANCE_M), identity)),
         Panel(VIDEO_PANEL_REGISTRATION_ID, MeshCollision.NoCollision),
         Visible(true),
         Scale(Vector3(1f))
       )
+      Log.i(TAG, "onSceneReady: created videoEntity=${videoEntity?.id}")
 
       val controlsY = eyeHeight - (Theater3DPanel.HEIGHT_METERS / 2f) - CONTROLS_GAP_M
       controlsEntity = Entity.create(
-        Transform(Pose(Vector3(0f, controlsY, -PANEL_DISTANCE_M), identity)),
+        Transform(Pose(Vector3(0f, controlsY, PANEL_DISTANCE_M), identity)),
         Panel(CONTROLS_PANEL_REGISTRATION_ID, MeshCollision.LineTest),
         Visible(true),
         Scale(Vector3(1f))
       )
+      Log.i(TAG, "onSceneReady: created controlsEntity=${controlsEntity?.id}")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to spawn theater panels", e)
       failAndFinish(e.message ?: "panel spawn failed")

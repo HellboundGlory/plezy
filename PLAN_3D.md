@@ -619,3 +619,106 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
     --dart-define=THEATER_MODE_BUILD=true` release build install-over-existing
     on the same device is the next concrete step before calling Phase 1+2
     fully done end-to-end.
+
+- **2026-09-09 -- End-to-end on-device verification: real per-eye stereo
+  confirmed working. Five real bugs found and fixed, in the order hit:**
+  1. **`Theater3DBridge.open()` had zero callers.** Phase 2 shipped the 3D
+     button/settings sheet but never wired it to the bridge. Fixed:
+     `lib/screens/video_player/parts/theater3d.dart` (new) launches theater
+     mode from the settings sheet's mode selection, reusing the flat
+     player's already-open source URL/headers cached at the
+     `_openMediaOnPlayer` call site.
+  2. **Release resource shrinker stripped `@drawable/dot_cursor`**
+     (loaded by class name via `BitmapFactory.decodeResource`, invisible to
+     R8's static analysis) -- crashed `Theater3DActivity.onCreate`. Fixed
+     with `android/theater3d/src/main/res/raw/keep.xml`
+     (`tools:keep="@drawable/dot_cursor"`).
+  3. **`kotlin-reflect` missing from `:theater3d`'s runtime classpath.**
+     `SystemDAG`'s topological sort reflects on registered system classes;
+     without it every lookup silently returns the "(Kotlin reflection is
+     not available)" stub and the sort fails as if no systems were
+     registered, even though they were. Fixed: added
+     `kotlin-reflect:2.4.10` to `android/theater3d/build.gradle.kts`.
+  4. **`request`/`listener` set after `super.onCreate()`.**
+     `AppSystemActivity.onCreate()` calls `registerPanels()` synchronously
+     as part of its own body (confirmed via `javap` bytecode, called
+     twice); setting the pending session's fields after that call meant
+     `registerPanels()`'s `request ?: return emptyList()` guard always saw
+     `null` and registered zero panels, crashing with "No panel creator
+     found for key". Fixed by reordering in `Theater3DActivity.onCreate()`.
+  5. **The real blocker: wrong panel placement axis, wrong SpatialFeature
+     hook, and a stale unimplemented mode -- three separate bugs that
+     together produced "registers fine, spawns fine, zero exceptions
+     anywhere, but absolutely nothing renders, not even the independent
+     ViewPanelRegistration controls panel, no matter which way the wearer
+     turns."** Root-caused only by recovering the (deleted, never-committed)
+     Phase 0 spike's source from this machine's local agent session
+     history (`~/.omp/agent/sessions/`) after every other on-device
+     hypothesis (mediacodec vo, panel registration type, input system
+     type, DV decoder options) was tested and ruled out:
+     - **`Vector3.Forward` is `(0, 0, +1)` in this SDK** (confirmed via
+       `javap` bytecode of `Vector3`'s static initializer), i.e. **+Z is
+       forward**, not the more common -Z convention. `Theater3DActivity`
+       placed both panels at `Vector3(0, eyeHeight, -PANEL_DISTANCE_M)` --
+       exactly the "naive fixed offset spawns the panel BEHIND the user"
+       trap the spike's own (deleted) source comment warned about by name.
+       Fixed: flipped to `+PANEL_DISTANCE_M`.
+     - **`VRFeature` belongs on `VrActivity.registerFeatures()`**, a
+       separate base-class hook from `AppSystemActivity`'s own
+       `registerSystemFeatures()` (confirmed via `javap` on both
+       `meta-spatial-sdk-0.13.2` and `meta-spatial-sdk-toolkit-0.13.2`).
+       The working spike used `registerFeatures() = listOf(VRFeature(this))`
+       exactly, matching the official `MediaPlayerSample`. An earlier pass
+       this session had `VRFeature` on `registerSystemFeatures()` instead --
+       it compiled, didn't crash, panels spawned with valid entity ids and
+       the video surface consumer fired, but nothing ever reached the real
+       render/compositor pipeline. Fixed by moving it to the correct hook.
+     - **`vo=mediacodec`'s hardware-upload path fails against the Spatial
+       SDK panel's compositor-owned `Surface`** regardless of
+       `VideoSurfacePanelRegistration` vs `ReadableVideoSurfacePanelRegistration`
+       -- `[autoconvert] Failed to create HW uploader for format yuv420p` /
+       `Could not initialize video chain`, confirmed on-device with both.
+       `TheaterMpvSession`'s headless `MpvPlayerCore` now constructs with
+       `hardwareDecoding = false` (selects `vo=gpu,gpu-next` from the
+       start), which decodes and renders cleanly. Switched the panel
+       registration to plain `VideoSurfacePanelRegistration` (matching the
+       official sample) while investigating; left in place since it's the
+       now-proven-working configuration -- Phase 2's shader post-process
+       will need a different mechanism against this registration type,
+       since it depended on the Readable variant's surface semantics.
+     - **`StereoModeResolver.resolve("synthetic")` threw** --
+       `ThreeDMode.auto`'s fallback when filename/aspect-ratio detection
+       finds nothing resolves to `TheaterStereoMode.synthetic` on the Dart
+       side, but the resolver only ever handled `off`/`sbs`/`ou`; its own
+       doc comment admitted `synthetic` was "intentionally absent" pending
+       a Phase 2 native hookup that never happened. This crashed
+       `registerPanels()` immediately for `auto` mode. Fixed: `synthetic`
+       now resolves to `StereoMode.LeftRight` (same as `sbs` -- the actual
+       heuristic shader pass itself is still not wired into the native
+       theater path; this only stops the crash and gives `auto` mode the
+       same raw-SBS-split behavior as manually selecting `sbs`).
+  - **Diagnostic technique that closed this out**: added explicit
+    success-path `Log.i` calls through `registerPanels()`/`onSceneReady()`
+    (entity ids, surface-consumer firing) since both previously only had
+    failure-path logging -- proved panels/entities were being created
+    successfully with zero exceptions, which is what made "nothing renders
+    despite zero errors anywhere" legible as a placement/feature-hook bug
+    rather than a crash to chase further.
+  - **Verified on-device, by the user, end-to-end**: theater panel and
+    controls panel both render at the correct position; per-eye stereo
+    compositor split confirmed genuine via an eye-closing test (closing
+    one eye shows only that eye's half); `auto`/`sbs`/`ou` modes all open
+    theater mode without error. Real stereo *depth* (as opposed to the
+    split mechanism) was not fully confirmed -- every test file used
+    turned out not to be genuine frame-packed SBS/OU source data (plays
+    back as an ordinary flat video with no doubling in the regular 2D
+    player, which is the tell -- true frame-packed 3D looks visibly
+    squished/doubled even in a non-stereo-aware player). Needs a real
+    frame-packed SBS or OU test file to close out.
+  - **Not yet done**: Phase 2's heuristic `Pseudo3DSbs.glsl` shader is
+    still not wired into the native theater path at all -- `auto` mode on
+    genuinely flat content currently does a raw (incorrect) SBS split of
+    the flat frame rather than applying the heuristic shader, since
+    `TheaterMpvSession`'s native `open()` sequence has no shader-chain
+    equivalent of the flat player's `getShadersForPreset()`. Scoping that
+    is unstarted.
