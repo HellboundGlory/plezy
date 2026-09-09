@@ -215,6 +215,11 @@ invented.
 
 ## Phase 2 — Heuristic 2D→3D shader + player UI (3-5 days, depends on Phase 1)
 
+**Status: shipped 2026-09-09** — all five open decisions below were
+resolved using the plan's own stated defaults; see the changelog entry at
+the bottom for what was built, what deviated from the literal plan text
+(and why), and what still needs an on-device pass.
+
 ### 2.1 GLSL shader: heuristic depth + SBS pack
 
 New asset `assets/shaders/pseudo3d/Pseudo3DSbs.glsl`, following the existing
@@ -534,3 +539,83 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
     means the full open → real per-eye stereo → exit → resume path is
     unverified end-to-end on-device; only the pieces reachable without
     that trigger were.
+
+- **2026-09-09 -- Phase 2 shipped: 3D button, settings sheet, heuristic
+  shader, prefs, auto-detect.** All five open decisions resolved using the
+  plan's own stated defaults (icon `Symbols.view_in_ar_rounded`, `.title`
+  persistence scope, auto-detect shipped in v1, default strength `0.5`,
+  in-scene exit affordance only -- no new Dart work needed there, it is
+  native and already shipped in Phase 1).
+  - **Player UI**: `track_chapter_controls.dart`'s dead fullscreen button is
+    replaced by the 3D button on `Theater3DBridge.isAvailable` builds; it
+    opens a new `_SettingsView.threeD` in `VideoSettingsSheet` (mode list
+    with checkmarks modeled on `_buildZoomView()`, strength slider modeled
+    on `volume_control.dart`'s `_buildVolumeSlider()`, live preview +
+    commit-on-release persistence).
+  - **Deviation from the literal plan text, and why**: the plan says
+    `isFullscreen`/`onToggleFullscreen` are "removed, not kept alongside."
+    Taken literally that would delete desktop fullscreen's only wiring path.
+    Resolution: `TrackControlsState.isFullscreen`/`.onToggleFullscreen` *are*
+    removed (renamed to `is3DActive`/`onOpen3DMenu`, nothing kept alongside
+    on that model), but the desktop fullscreen button in
+    `track_chapter_controls.dart` now reads `FullscreenStateManager()`
+    directly via its own `ListenableBuilder` -- a pattern this file already
+    used for `SleepTimerService` a few lines above -- instead of routing
+    through `TrackControlsState` at all. Desktop fullscreen behavior is
+    unchanged; only its plumbing moved.
+  - **Data model**: `ThreeDMode`/`ThreeDConfig` added to
+    `lib/models/shader_preset.dart`, mirroring `NVScalerConfig`'s freezed
+    shape exactly (JSON round-trip covered by
+    `test/models/shader_preset_test.dart`).
+  - **Persistence**: `ScopedPlayerPrefs.threeDMode`/`.threeDStrength` added
+    to `scoped_player_prefs.dart`, `defaultThreeDMode`/`defaultThreeDStrength`/
+    `threeDModeScope` (default `.title`) added to `settings_service.dart`,
+    both mirroring `boxFitMode`'s existing template and registered in the
+    master pref list.
+  - **Shader**: `assets/shaders/pseudo3d/Pseudo3DSbs.glsl` added verbatim
+    from section 2.1, registered in `shader_asset_loader.dart`. Because
+    `ThreeDConfig` is explicitly orthogonal to `ShaderPresetType` (per this
+    plan's own 2.2 data model -- there is no `ShaderPresetType.pseudo3d`),
+    `getShadersForPreset()` gained an optional `threeDConfig` parameter that
+    appends the pseudo-3D shader after whatever the base preset resolves to
+    (including `none`), and `shader_service.dart`'s `applyPreset()` threads
+    it through before `_reappendAmbientLighting`, skipping it entirely for
+    already-3D passthrough sources. A real bug was found and fixed along the
+    way: `getShadersForPreset()`'s empty-`shaderPaths` early return would
+    have silently dropped a bare pseudo-3D shader when the base preset was
+    `none` -- covered by a regression test in `shader_service_test.dart`.
+  - **Auto-detect**: `lib/utils/stereo_source_detector.dart` (new) covers
+    the filename tags (`_SBS`/`_HSBS`/`_Half-SBS`/`_OU`/`_TAB`/`_Half-OU`,
+    case-insensitive) and the aspect-ratio doubling/halving fallback from
+    section 2.4, filename taking precedence, both covered by
+    `test/utils/stereo_source_detector_test.dart`.
+  - **A real gap found and closed**: `QuestPlatform.ensureInitialized()` was
+    never called anywhere in the app (confirmed by grep before this phase),
+    so `QuestPlatform.isQuest` -- and therefore `Theater3DBridge.isAvailable`
+    -- would have stayed `false` forever, even on real Quest hardware. Now
+    called from `lib/main.dart`'s existing `deviceCapabilities` startup
+    gate, alongside `TvDetectionService`/`DevicePerformance`/
+    `VideoDecodeCapabilities` -- the plan's own anticipated "first real
+    behavioral read of `QuestPlatform.isQuest`."
+  - **A second real gap found and closed**: `Theater3DBridge.isAvailable`
+    needs a synchronous, compile-time-influenced check usable inside a
+    `build()` method (Dart cannot probe platform-channel existence without
+    invoking it). Added `kTheaterModeBuild = bool.fromEnvironment('THEATER_MODE_BUILD')`,
+    mirroring the existing `kQuestBuild` idiom, so `isAvailable =
+    QuestPlatform.isQuest && kTheaterModeBuild`. This is a **second,
+    separate dart-define** from the native `THEATER_MODE=1` Gradle env var
+    -- `QUEST_BUILD.md`'s theater-mode build command now passes both;
+    omitting the dart-define compiles a `THEATER_MODE=1` build fine but
+    silently hides the button.
+  - **Verification**: `dart analyze` on every changed/created file -- no
+    issues. `dart test` on every new/changed suite plus the directly
+    affected pre-existing suites (`video_controls_test.dart`,
+    `video_settings_sheet_test.dart`, `track_sheet_test.dart`) -- 187 tests,
+    all passed, no regressions.
+  - **Not yet done**: on-device verification. The full
+    open -> real per-eye stereo -> exit -> resume path through this new
+    button is still unverified on a physical Quest 3 -- Phase 1's device
+    pass predates this trigger existing. A `THEATER_MODE=1 QUEST=1
+    --dart-define=THEATER_MODE_BUILD=true` release build install-over-existing
+    on the same device is the next concrete step before calling Phase 1+2
+    fully done end-to-end.
