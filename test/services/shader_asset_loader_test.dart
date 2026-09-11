@@ -48,19 +48,13 @@ void main() {
 
   Future<String> bundledText(String assetPath) async => utf8.decode(await bundledBytes(assetPath));
 
-  /// The value a materialized shader actually carries in its `//!PARAM
-  /// strength` block -- what mpv reads as that parameter's default, as
+  /// The value a materialized shader actually carries in its `const float
+  /// STRENGTH` declaration -- what the hook body multiplies disparity by, as
   /// opposed to a substring that happens to appear somewhere in the file.
   String bakedPseudo3DStrength(File file) {
-    final lines = file.readAsStringSync().split('\n');
-    final paramIndex = lines.indexWhere((line) => line.trimLeft().startsWith('//!PARAM'));
-    expect(paramIndex, isNonNegative, reason: 'materialized shader must keep its PARAM block');
-    final defaultIndex = lines.indexWhere(
-      (line) => RegExp(r'^[0-9]*\.?[0-9]+$').hasMatch(line.trim()),
-      paramIndex + 1,
-    );
-    expect(defaultIndex, isNonNegative, reason: 'materialized shader must keep a default value line');
-    return lines[defaultIndex].trim();
+    final match = RegExp(r'const\s+float\s+STRENGTH\s*=\s*([0-9]*\.?[0-9]+)\s*;').firstMatch(file.readAsStringSync());
+    expect(match, isNotNull, reason: 'materialized shader must keep its STRENGTH constant');
+    return match!.group(1)!;
   }
 
   test('traversal and absolute names cannot load or delete outside managed directory', () async {
@@ -159,19 +153,65 @@ void main() {
     expect(shaderPath, isNotNull);
 
     final bundledLines = (await bundledText('pseudo3d/Pseudo3DSbs.glsl')).split('\n');
-    final bakedLines = await File(shaderPath!).readAsString().then((s) => s.split('\n'));
+    final bakedLines = (await File(shaderPath!).readAsString()).split('\n');
 
     expect(bakedLines, hasLength(bundledLines.length));
     final differing = [
       for (var i = 0; i < bundledLines.length; i++)
         if (bundledLines[i] != bakedLines[i]) i,
     ];
-    // Only the PARAM block's default line changes: the metadata that defines
-    // the parameter and the whole hook body must survive byte-for-byte.
+    // Only the STRENGTH literal changes: the metadata and the whole hook body
+    // must survive byte-for-byte.
     expect(differing, hasLength(1));
-    expect(bundledLines[differing.single].trim(), '0.5');
-    expect(bakedLines[differing.single].trim(), '0.75');
-    expect(bakedLines[differing.single - 1].trim(), '//!MAXIMUM 1.0');
+    expect(bundledLines[differing.single].trim(), 'const float STRENGTH = 0.5;');
+    expect(bakedLines[differing.single].trim(), 'const float STRENGTH = 0.75;');
+  });
+
+  /// Protects the failure this shipped with once: the shader carried an mpv
+  /// `//!PARAM` block, which the classic `vo=gpu` user-shader parser has no
+  /// case for -- it errors ("Unrecognized command 'PARAM strength'!") and
+  /// abandons the entire file, so the hook never registered and the
+  /// compositor raw-split a flat frame instead of synthesizing depth. Parsing
+  /// on both backends is a hard requirement, since the theater session's vo is
+  /// chosen per file.
+  test('the pseudo-3D shader uses only metadata commands classic vo=gpu can parse', () async {
+    // The complete command set of parse_hook()/parse_tex() in mpv v0.41.0's
+    // video/out/gpu/user_shaders.c. Anything else makes vo=gpu drop the file.
+    const voGpuCommands = {
+      'HOOK', 'BIND', 'SAVE', 'DESC', 'OFFSET', 'WIDTH', 'HEIGHT', 'WHEN', 'COMPONENTS', 'COMPUTE', // hook
+      'TEXTURE', 'SIZE', 'FORMAT', 'FILTER', 'BORDER', // texture
+    };
+
+    final source = await bundledText('pseudo3d/Pseudo3DSbs.glsl');
+    final commands = <String>[
+      for (final line in source.split('\n'))
+        if (line.trimLeft().startsWith('//!'))
+          if (RegExp(r'^//!([A-Z]+)').firstMatch(line.trimLeft()) case final match?) match.group(1)!,
+    ];
+
+    expect(commands, isNotEmpty);
+    expect(commands.toSet().difference(voGpuCommands), isEmpty,
+        reason: 'a command outside this set makes vo=gpu reject the whole shader file');
+    // Named explicitly: this is the exact regression, and the reason strength
+    // is materialized into a constant instead.
+    expect(commands, isNot(contains('PARAM')));
+    expect(source, contains('const float STRENGTH'));
+  });
+
+  /// mpv finds the end of a shader's body with a plain substring search for the
+  /// two-character header marker (bstr_split_tok in user_shaders.c), not a
+  /// line-anchored one. So the marker appearing anywhere but at the start of a
+  /// metadata line -- including inside a comment -- truncates the body before
+  /// hook() and the shader stops compiling.
+  test('the pseudo-3D shader never mentions the header marker outside its metadata block', () async {
+    final source = await bundledText('pseudo3d/Pseudo3DSbs.glsl');
+
+    final offenders = [
+      for (final (index, line) in source.split('\n').indexed)
+        if (line.contains('//!') && !line.trimLeft().startsWith('//!')) '${index + 1}: $line',
+    ];
+
+    expect(offenders, isEmpty, reason: 'these lines would truncate the shader body');
   });
 
   test('materializes one stable file per quantized strength', () async {

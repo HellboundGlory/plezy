@@ -53,9 +53,9 @@ class ShaderAssetLoader {
   /// on top of whichever preset (including none) is already active.
   ///
   /// This is the source template, never the path handed to mpv for playback:
-  /// strength has to be baked into a per-strength copy of it, since mpv can
-  /// only override a `//!PARAM` on `vo=gpu-next` (see
-  /// [materializePseudo3DShader]).
+  /// strength has to be baked into a per-strength copy of it, since mpv's
+  /// `//!PARAM` mechanism is unavailable on the classic `vo=gpu` backend the
+  /// theater session prefers (see [materializePseudo3DShader]).
   static const String _pseudo3DShader = 'pseudo3d/Pseudo3DSbs.glsl';
 
   /// Get the application-owned shader cache directory, creating it if needed.
@@ -234,19 +234,20 @@ class ShaderAssetLoader {
   static final Map<String, String> _verifiedBakedPseudo3D = {};
 
   /// Materializes [Pseudo3DSbs.glsl] with [strength] written into its
-  /// `//!PARAM strength` default, returning the path to that copy (null if
+  /// `const float STRENGTH` value, returning the path to that copy (null if
   /// it could not be written).
   ///
-  /// The value is baked into a per-strength copy rather than overridden at
-  /// runtime because `--glsl-shader-opts` -- the only mpv option that can
-  /// override a user-shader `//!PARAM` -- is honoured by `vo=gpu-next`
-  /// alone in the mpv this repo pins: `vo_gpu_next.c` is that option's only
-  /// consumer, while the classic `vo=gpu` compiler (`parse_user_shader`)
-  /// takes no options at all, so a `vo=gpu` session would silently ignore
-  /// it. The theater path picks its GL backend per file
-  /// (`MpvPlayerCore.initialVideoOutput`), so it cannot depend on which one
-  /// a given session lands on. See PLAN_3D.md Phase 2 section 2.1, which
-  /// left exactly this question open, and the changelog entry that closed
+  /// Strength is baked into a per-strength copy rather than left as an mpv
+  /// parameter because mpv's `//!PARAM` blocks are a libplacebo
+  /// (`vo=gpu-next`) feature: classic `vo=gpu`'s user-shader parser has no
+  /// `PARAM` case, so it reports `Unrecognized command 'PARAM ...'` and
+  /// abandons the *entire shader file* — a `vo=gpu` session then renders the
+  /// untouched frame with no hook registered, and no error past that one log
+  /// line. That is exactly how this shipped broken once. The theater path
+  /// picks its GL backend per file (`MpvPlayerCore.initialVideoOutput`, gpu
+  /// first), so the shader has to parse on both, and baking is the only
+  /// mechanism that does not depend on which one a session lands on. See
+  /// PLAN_3D.md Phase 2 section 2.1 and the changelog entries that resolved
   /// it.
   static Future<String?> materializePseudo3DShader(double strength) {
     final steps = (strength.clamp(0.0, 1.0) / pseudo3DStrengthGranularity).round();
@@ -310,16 +311,19 @@ class ShaderAssetLoader {
     }
   }
 
-  /// Replaces the default value of the `//!PARAM strength` block with
-  /// [value], returning null when the file defines no such block. The
-  /// default is the first non-metadata line after the block's headers, so
-  /// only a bare numeric literal on its own line is a candidate.
+  /// Replaces the `const float STRENGTH = <value>;` literal with [value],
+  /// returning null when the file declares no such constant.
+  ///
+  /// The shader deliberately carries strength as a plain GLSL constant rather
+  /// than an mpv `//!PARAM` block: `PARAM` is a libplacebo (vo=gpu-next)
+  /// feature, and classic vo=gpu's parser has no case for it -- it errors and
+  /// abandons the entire shader file, so a vo=gpu session would silently
+  /// render the untouched frame. See the shader's own header comment.
   static String? _bakePseudo3DStrength(String source, String value) {
-    final pattern = RegExp(
-      r'(//!PARAM[ \t]+strength\b[^\n]*\n(?:[ \t]*//![^\n]*\n)*)([ \t]*)([0-9]*\.?[0-9]+)',
-    );
+    final pattern = RegExp(r'^([ \t]*const[ \t]+float[ \t]+STRENGTH[ \t]*=[ \t]*)([0-9]*\.?[0-9]+)([ \t]*;)',
+        multiLine: true);
     if (!pattern.hasMatch(source)) return null;
-    return source.replaceFirstMapped(pattern, (match) => '${match[1]}${match[2]}$value');
+    return source.replaceFirstMapped(pattern, (match) => '${match[1]}$value${match[3]}');
   }
 
   /// Get the shader file path for the heuristic pseudo-3D SBS shader

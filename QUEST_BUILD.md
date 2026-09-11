@@ -756,11 +756,16 @@ are wired in different places:
 | `sbs` / `ou`, and `auto` on a filename-detected 3D master | Nothing runs in mpv. The compositor splits the frame the way the source is already packed (`StereoModeResolver`). |
 | `auto` on everything else (`synthetic`) | `ShaderAssetLoader.materializePseudo3DShader(strength)` writes a per-strength copy of `assets/shaders/pseudo3d/Pseudo3DSbs.glsl` into the app cache; its path crosses the bridge as `shaderPath` and `TheaterMpvSession` appends it to the session's `glsl-shaders` before `loadfile`. The shader runs inside mpv's own vo chain. |
 
-Strength is baked into that shader copy rather than overridden at runtime
-because `--glsl-shader-opts` is honoured by `vo=gpu-next` alone in the
-pinned mpv (v0.41.0), and the theater session's GL backend is chosen per
-file. Changing the strength slider therefore takes effect on the next
-theater launch — which is when it is set anyway.
+Strength is baked into that shader copy rather than declared as an mpv
+shader parameter because a `PARAM` metadata block is a libplacebo
+(`vo=gpu-next`) feature: classic `vo=gpu`'s user-shader parser has no case
+for it, so it reports `Unrecognized command 'PARAM strength'` and abandons
+the *entire shader file* — the hook never registers and the panel silently
+raw-splits a flat frame. The theater session's vo is chosen per file
+(`gpu,gpu-next` with `gpu` primary), so the shader must parse on both. The
+strength is therefore a plain GLSL `const float STRENGTH` that the loader
+substitutes. Changing the strength slider takes effect on the next theater
+launch — which is when it is set anyway.
 
 **Verified on-device**: real frame-packed SBS masters display correctly in
 `sbs` and `auto` (confirmed on a Quest 3 by eye, 2026-09-11), as do `ou`

@@ -276,21 +276,40 @@ wrong, both found while wiring it into the theater path:**
    each eye gets the wrong half), the fixed one by 0.0; and the disparity
    direction checks out geometrically (near content samples crossed, so it
    reads as in front of the panel).
-2. **`strength` cannot be a runtime override.** The guess above —
-   `change-list glsl-opts` — is not even the option name; it is
-   `--glsl-shader-opts`, and in the pinned mpv (v0.41.0) it is honoured by
-   **`vo=gpu-next` only**: `vo_gpu_next.c` is that option's sole consumer,
-   while the classic `vo=gpu` compiler `parse_user_shader()` takes no
-   options at all and therefore always uses the `//!PARAM` block's in-file
-   default. The theater session runs `vo=gpu,gpu-next` (gpu primary, gpu-next
-   as fallback) so it must not depend on which one a given file lands on.
-   Resolution: the **fallback** the plan already named — the strength is
-   baked into a per-strength copy of the shader instead, which is exactly
-   the regenerate-and-re-append pattern already proven in
-   `ambient_lighting_service.dart`. See
-   `ShaderAssetLoader.materializePseudo3DShader`. The nicer live-updating
-   slider is still unavailable in this mpv build; strength changes take
-   effect on the next theater launch, which is when they are set anyway.
+2. **The `//!PARAM` block makes the shader unusable on this path.** The plan
+   wrote `strength` as a real mpv user-shader `//!PARAM` and guessed a runtime
+   override via `change-list glsl-opts` would work. Both halves of that are
+   wrong, and the second is much worse than "the slider won't update live":
+   - The option is `--glsl-shader-opts`, not `change-list glsl-opts`. It is
+     also honoured by **`vo=gpu-next` only** (`vo_gpu_next.c` is its sole
+     consumer).
+   - More importantly, **classic `vo=gpu` cannot even parse a shader
+     containing a `PARAM` block.** Its parser
+     (`video/out/gpu/user_shaders.c`, v0.41.0) recognises exactly
+     `HOOK BIND SAVE DESC OFFSET WIDTH HEIGHT WHEN COMPONENTS COMPUTE` in a
+     hook block and `TEXTURE SIZE FORMAT FILTER BORDER` in a texture block.
+     `PARAM` appears in neither list, so the line falls through to
+     `mp_err(log, "Unrecognized command '%.*s'!")`, `parse_hook()` returns
+     false, and `parse_user_shader()` **abandons the entire file**. No hook is
+     registered, no error past that one log line, and the compositor
+     raw-splits the flat frame — which is exactly the "still messed up" symptom
+     this shipped with and was diagnosed from on-device logcat.
+   So the resolution is not "bake it to avoid the override limitation" — it is
+   that **`PARAM` has to go entirely**. The strength is a plain GLSL
+   `const float STRENGTH`, substituted per-strength by
+   `ShaderAssetLoader.materializePseudo3DShader` (the regenerate-and-re-append
+   pattern already proven in `ambient_lighting_service.dart`), which is what
+   makes the file parse on either backend. The live-updating slider is
+   unavailable in this mpv build; strength changes take effect on the next
+   theater launch, which is when they are set anyway.
+
+   Two guards now pin this so it cannot silently regress
+   (`test/services/shader_asset_loader_test.dart`): the shader's metadata may
+   only use the `vo=gpu` command set above (with `PARAM` asserted absent by
+   name), and the two-character header marker may never appear anywhere but at
+   the start of a metadata line — mpv finds the end of the shader body with a
+   *substring* search (`bstr_split_tok`), not a line-anchored one, so a stray
+   mention of it in a comment truncates the body before `hook()`.
 
 Section 2.4's detector has the same class of latent gap: `ThreeDMode.auto`
 resolves through `detectFromFileName` only, so the aspect-ratio fallback is
@@ -867,3 +886,54 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
     *non*-blue but doubled/cropped picture is the opposite signal: the
     shader is not running at all, so check the `Appending pseudo-3D
     shader:` log line `TheaterMpvSession` now emits.
+
+- **2026-09-11 -- On-device test of the synthetic tier: still broken, root
+  cause found and fixed.** First Quest 3 run of `auto` on flat content
+  reproduced the original "messed up" symptom exactly. The logcat capture
+  named the cause outright:
+  `E/TheaterMpvSession: [vo/gpu] Unrecognized command 'PARAM strength'!`
+  - **Cause: the shader's `//!PARAM` block is rejected wholesale by classic
+    `vo=gpu`.** Not ignored -- rejected. `parse_hook()` in
+    `video/out/gpu/user_shaders.c` (v0.41.0) handles only `HOOK BIND SAVE
+    DESC OFFSET WIDTH HEIGHT WHEN COMPONENTS COMPUTE` (and `parse_tex` only
+    `TEXTURE SIZE FORMAT FILTER BORDER`); `PARAM` is absent, so it hits the
+    `Unrecognized command` error, returns false, and `parse_user_shader()`
+    abandons the **entire file**. Zero hooks registered, no error beyond that
+    one line, and the compositor raw-splits the flat frame -- the exact
+    symptom. `PARAM` is a libplacebo (`vo=gpu-next`) feature. The theater
+    session's vo is `gpu,gpu-next` with `gpu` primary
+    (`MpvPlayerCore.initialVideoOutput`), so the file has to parse on
+    `vo=gpu`. **This is a strictly stronger finding than the earlier entry's
+    "`--glsl-shader-opts` only works on gpu-next"**: it is not that the
+    *override* is unavailable on `vo=gpu`, it is that the *declaration* makes
+    the whole shader unusable there.
+  - **Fix: the `PARAM` block is gone.** Strength is now a plain GLSL
+    `const float STRENGTH = 0.5;` that
+    `ShaderAssetLoader.materializePseudo3DShader` substitutes per-strength --
+    which the materialization design already made free, since a per-strength
+    copy is generated anyway and therefore never needed mpv's parameter
+    system at all. The file now carries only `HOOK`/`BIND`/`DESC` metadata and
+    parses on either backend.
+  - **A second landmine found in passing, in this entry's own comment text.**
+    mpv locates the end of a shader body with `bstr_split_tok(body, "//!")`
+    -- a plain *substring* search, not line-anchored. An explanatory comment
+    mentioning the header marker would therefore have truncated the body
+    before `hook()`. Rewritten to refer to "mpv's PARAM metadata" in prose,
+    and the asset now carries an explicit note so the next editor does not
+    reintroduce it.
+  - **Both fixed failure modes are now pinned by tests**
+    (`test/services/shader_asset_loader_test.dart`): the shader's metadata
+    commands must be a subset of the `vo=gpu` set with `PARAM` asserted absent
+    by name, and the header marker may appear only at the start of a metadata
+    line.
+  - **Diagnosis was reproduced independently of the device**: mpv's
+    `parse_user_shader`/`parse_hook` control flow was reimplemented against the
+    pinned v0.41.0 source and run over both shader revisions. The pre-fix file
+    yields `parse_hook ok = false` and zero hooks with the identical
+    `Unrecognized command 'PARAM strength'!` text; the fixed file yields
+    `ok = true`, `('MAIN','HOOKED')` registered, `vec4 hook()` present in the
+    parsed body, and no stray-marker truncation. Verified against on-device
+    logcat, which had already shown the same error.
+  - **Not yet verified**: whether the synthetic tier now *renders* as
+    intended on the headset. The parse rejection is fixed and proven; the
+    depth heuristic's quality is still unjudged.
