@@ -3,7 +3,6 @@ package com.edde746.plezy.mpv
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
-import android.graphics.PixelFormat
 import android.media.AudioAttributes
 import android.os.Build
 import android.os.Handler
@@ -61,16 +60,40 @@ class MpvPlayerCore private constructor(
    * Skips every Activity-window concern -- the [android.widget.FrameLayout]
    * container, the video/OSD [SurfaceView]s, `PlayerSurfaceHost`'s
    * content-view attach, and the Flutter-overlay layout listener -- so this
-   * core never touches the host Activity's window. For a session driving a
-   * compositor-owned [Surface] it never created itself (Quest's Theater3D
-   * panel -- see android/app/src/theater3d/TheaterMpvSession.kt), attach it
-   * with [attachHeadlessSurface] once it is ready; this core reuses the
-   * exact same [surfaceCreated]/[surfaceChanged]/[surfaceDestroyed] pipeline
-   * every SurfaceView-backed session already goes through. A headless
-   * session never gets an OSD plane (mediacodec's OSD is itself a
-   * SurfaceView-backed plane), so subtitles do not render in this mode.
+   * core never touches the host Activity's window. Sets up a session whose
+   * pictures go somewhere this core did not create: for Quest's Theater3D
+   * panel (android/app/src/theater3d/TheaterMpvSession.kt) that is
+   * [setRenderSurface], the panel's own compositor Surface rendered into by
+   * the app's GL. A headless core also never gets an OSD plane (mediacodec's
+   * OSD is itself a SurfaceView-backed plane); subtitles reach the panel only
+   * if whatever renders the frame draws them.
    */
-  private val headless: Boolean = false
+  private val headless: Boolean = false,
+  /**
+   * Renders through mpv's **render API** instead of a `vo`: mpv draws into an
+   * FBO this app owns (`android/libmpv/src/main/cpp/render_gl.cpp`), the app's
+   * own shader warps and packs that texture, and the result is presented to a
+   * Surface the app drives. See `HANDOFF_RENDER_API.md`.
+   *
+   * What it changes here, and nothing more:
+   *  - `vo=libmpv` replaces [initialVideoOutput]'s chain. `libmpv` is never a
+   *    probe candidate (`vo_libmpv.c`'s `preinit` refuses when `vo->probing`),
+   *    so it can only be reached by name, and `gpu-context`/`opengl-es` are
+   *    vo_gpu options that the render host's own EGL context replaces.
+   *  - There is no surface handoff: no `wid`, no OSD plane, and
+   *    [refreshVideoOutput] is inert. The compositor Surface goes to the
+   *    render host instead (see [nativePlayer] and [renderHostTeardown]).
+   *  - [usesMediaCodecVo] is false, so none of the per-file `vo` routing runs:
+   *    DV reshaping, the software-decode fallback, the chain-failure watchdog
+   *    and the tone-map bookkeeping all exist to move a session between video
+   *    outputs, and there is no video output left to move.
+   *
+   * Decoding is unaffected: `hwdec` still decides it, and under the render API
+   * `hwdec=mediacodec` reaches GL through mpv's `aimagereader` interop
+   * (`AImageReader` + `GL_OES_EGL_image_external`), which the pinned libmpv
+   * has compiled in.
+   */
+  private val renderApi: Boolean = false
 ) : SurfaceHolder.Callback,
   SurfacePlayerCore {
   constructor(
@@ -79,21 +102,22 @@ class MpvPlayerCore private constructor(
     hardwareDecoding: Boolean = true,
     osdRenderScale: Float = 1f,
     initialLogLevel: String = "warn",
-    headless: Boolean = false
-  ) : this(context, audioOnly, hardwareDecoding, osdRenderScale, initialLogLevel, null, null, false, headless)
+    headless: Boolean = false,
+    renderApi: Boolean = false
+  ) : this(context, audioOnly, hardwareDecoding, osdRenderScale, initialLogLevel, null, null, false, headless, renderApi)
 
   internal constructor(
     context: Context,
     audioOnly: Boolean,
     propertyWriter: (suspend (String, String) -> Unit)?
-  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, null, true, false)
+  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, null, true, false, false)
 
   internal constructor(
     context: Context,
     audioOnly: Boolean,
     propertyWriter: (suspend (String, String) -> Unit)?,
     commandRunner: suspend (Array<String>) -> Long?
-  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, commandRunner, true, false)
+  ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, commandRunner, true, false, false)
 
   companion object {
     private const val TAG = "MpvPlayerCore"
@@ -206,9 +230,10 @@ class MpvPlayerCore private constructor(
 
   /** Hardware sessions render through the fork vo=mediacodec (see
    * [initialVideoOutput]); the OSD surface and video-rect layout exist only
-   * there. */
+   * there. A render-API session has no `vo` at all, so it has none of that
+   * either -- see [renderApi]. */
   private val usesMediaCodecVo: Boolean
-    get() = !audioOnly && hardwareDecoding
+    get() = !audioOnly && hardwareDecoding && !renderApi
   private var overlayLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
   @Volatile private var disposing: Boolean = false
@@ -419,10 +444,9 @@ class MpvPlayerCore private constructor(
         )
 
         if (headless) {
-          // A headless core is fed a compositor-owned Surface it never
-          // created itself (see attachHeadlessSurface) -- no
-          // FrameLayout/SurfaceView/content-view attach, and no OSD plane
-          // (mediacodec's OSD is itself a SurfaceView-backed plane).
+          // A headless core's pictures go to a Surface this core did not
+          // create (see headless/setRenderSurface) -- no FrameLayout,
+          // SurfaceView or content-view attach, and no OSD plane.
           Log.d(TAG, "Headless core: skipping SurfaceView/window setup")
         } else {
           surfaceContainer = PlayerSurfaceHost.createContainer(activity)
@@ -487,10 +511,23 @@ class MpvPlayerCore private constructor(
               setOption("gapless-audio", "weak")
             } else {
               // vo choice is decode-path-dependent; rationale on
-              // initialVideoOutput.
-              setOption("vo", initialVideoOutput(hardwareDecoding))
-              setOption("gpu-context", "android")
-              setOption("opengl-es", "yes")
+              // initialVideoOutput -- except under the render API, where the
+              // vo is always libmpv because the app owns the GL context.
+              if (renderApi) {
+                // Not a probe candidate: vo_libmpv.c's preinit refuses when
+                // vo->probing, so libmpv is only ever reached by name.
+                setOption("vo", "libmpv")
+                // Whether mpv fits the frame into the render target with black
+                // bars or stretches it to fill is the caller's call, because it
+                // depends on what the app does with the result -- see
+                // [setRenderSurface]. There is no sane universal default here:
+                // gl_video's own is to letterbox (aspect.c, keepaspect=1).
+                setOption("keepaspect", if (pendingRenderSurface?.letterbox == false) "no" else "yes")
+              } else {
+                setOption("vo", initialVideoOutput(hardwareDecoding))
+                setOption("gpu-context", "android")
+                setOption("opengl-es", "yes")
+              }
               // Keep AV1 film grain inside the decoder (dav1d). `auto` hands it
               // to any vo claiming VO_CAP_FILM_GRAIN, and gpu-next claims it on
               // GLES where libplacebo's raster grain fallback fetches luma by
@@ -585,6 +622,14 @@ class MpvPlayerCore private constructor(
           }
 
           Log.d(TAG, "Initialized successfully")
+          // After mpv_initialize and before any load can reach this core, and
+          // off the main thread because EGL setup plus the shader compile is
+          // tens of milliseconds of blocking work. See setRenderSurface.
+          pendingRenderSurface?.let { target ->
+            Log.d(TAG, "Creating the render-API host")
+            withContext(Dispatchers.IO) { createRenderHost(target) }
+            Log.d(TAG, "Render-API host ready")
+          }
           onResult(true)
         } catch (e: Exception) {
           Log.e(TAG, "Failed to initialize native: ${e.message}", e)
@@ -743,36 +788,90 @@ class MpvPlayerCore private constructor(
     handoffDestroyedSurface("surfaceDestroyed", videoLost = true)
   }
 
-  // Headless (compositor-owned Surface) attach point -- see the `headless`
-  // constructor parameter's doc comment.
+  // A compositor-owned Surface reaches a core through [setRenderSurface]
+  // instead: the render API needs the Surface itself (for EGL), not a
+  // SurfaceHolder-mediated handoff to a `vo`.
+
+  // Render-API host -- see the [renderApi] constructor parameter.
 
   /**
-   * Attaches a Surface this core never created itself -- e.g. the raw
-   * compositor Surface a Quest Theater3D panel hands back through its
-   * `surfaceConsumer` (see android/theater3d/Theater3DPanel.kt). Only
-   * valid on a core built with `headless = true`; a no-op otherwise.
-   *
-   * Reuses the exact [surfaceCreated]/[surfaceChanged] pipeline every
-   * SurfaceView-backed session already goes through, via a minimal
-   * [SurfaceHolder] shim -- there is no real [SurfaceHolder] to source one
-   * from here, since a Spatial SDK panel has no Android View.
+   * Tears down a render-API host created against this core's session. Run on
+   * the disposal thread immediately *before* the native session is closed,
+   * because an `mpv_render_context` must be freed while its mpv core is still
+   * alive (`mpv/render.h`'s lifecycle section) -- so this cannot be left to a
+   * caller that happens to tear its own objects down at some earlier point.
+   * Unset for every `vo`-backed session.
    */
-  fun attachHeadlessSurface(surface: Surface, width: Int, height: Int) {
-    if (!headless || audioOnly) return
-    val holder = HeadlessSurfaceHolder(surface)
-    surfaceCreated(holder)
-    surfaceChanged(holder, PixelFormat.OPAQUE, width, height)
+  @Volatile internal var renderHostTeardown: (() -> Unit)? = null
+
+  private fun teardownRenderHost() {
+    val teardown = renderHostTeardown ?: return
+    renderHostTeardown = null
+    try {
+      teardown()
+    } catch (e: Exception) {
+      Log.w(TAG, "Render host teardown failed", e)
+    }
   }
 
   /**
-   * Counterpart to [attachHeadlessSurface]; call before the compositor
-   * surface becomes invalid, passing the same [Surface] that was attached
-   * (unused by [surfaceDestroyed] today, but kept symmetric rather than
-   * relying on that).
+   * Registers the render-API target for this core: the compositor's own
+   * [Surface] plus the two shader sources, which **must** both be supplied
+   * before [initialize]. Only valid on a core built with `renderApi = true`.
+   *
+   * The timing is structural rather than a caller convention: [initialize]
+   * creates the EGL context, the `mpv_render_context` and the shader program
+   * itself, on its own worker, between `mpv_initialize` and reporting success.
+   * Two reasons that cannot be left to the caller --
+   *
+   *  - `vo=libmpv`'s `preinit` refuses outright when no render context exists,
+   *    so a load that beat the host would fail the video chain; and
+   *  - mpv reverts to a window-creating vo if the first frame arrives first.
+   *
+   * A failed create fails the whole initialize, and the failing stage is logged
+   * under the `MpvRenderGl` tag.
+   *
+   * [letterbox] decides mpv's `keepaspect`: true fits the frame into the render
+   * target and black-bars the remainder, false stretches it to fill. It is not a
+   * cosmetic preference -- a caller presenting a **packed stereo pair** for
+   * splitting must pass false, because the compositor's per-eye split assumes
+   * each half of the output carries exactly one eye's view, and a letterboxed
+   * frame puts the pair inside black bars and squashes both eyes. A caller
+   * presenting flat content wants true, so a scope-ratio film keeps its shape.
    */
-  fun detachHeadlessSurface(surface: Surface) {
-    if (!headless || audioOnly) return
-    surfaceDestroyed(HeadlessSurfaceHolder(surface))
+  fun setRenderSurface(
+    surface: Surface,
+    vertexShader: String,
+    fragmentShader: String,
+    letterbox: Boolean = true
+  ) {
+    check(renderApi) { "setRenderSurface requires a renderApi core" }
+    check(!isInitialized) { "setRenderSurface must precede initialize()" }
+    pendingRenderSurface = RenderSurface(surface, vertexShader, fragmentShader, letterbox)
+  }
+
+  private class RenderSurface(
+    val surface: Surface,
+    val vertexShader: String,
+    val fragmentShader: String,
+    /** See [setRenderSurface]'s [letterbox]: mpv's `keepaspect`. */
+    val letterbox: Boolean
+  )
+
+  private var pendingRenderSurface: RenderSurface? = null
+
+  /** The live render host, or null on a `vo`-backed session. See [setRenderSurface]. */
+  @Volatile internal var renderHost: MpvRenderHost? = null
+    private set
+
+  private fun createRenderHost(target: RenderSurface) {
+    val p = player ?: throw MpvException("MPV player unavailable")
+    val host = MpvRenderHost.create(p, target.surface, target.vertexShader, target.fragmentShader)
+    renderHost = host
+    // Run immediately before this session's native close, on the disposal
+    // thread: an mpv_render_context must be freed while its mpv core is still
+    // alive (mpv/render.h's lifecycle section). See teardownRenderHost.
+    renderHostTeardown = { host.close() }
   }
 
   // OSD surface (the vo=mediacodec subtitle/OSD plane)
@@ -1178,6 +1277,11 @@ class MpvPlayerCore private constructor(
 
   private fun refreshVideoOutput(reason: String) {
     if (audioOnly || disposing || videoOutputFailure != null) return
+    // A render-API session owns its Surface end to end (see [renderApi]):
+    // there is no `wid` to write and no placeholder to hand off, so every
+    // reason this handles -- initialize, surfaceCreated/Changed, setVisible,
+    // updateFrame -- has nothing to do.
+    if (renderApi) return
 
     rememberCurrentSurfaceSize()
     val p = player
@@ -2163,6 +2267,9 @@ class MpvPlayerCore private constructor(
     if (p != null) {
       Thread {
         try {
+          // The render host's mpv_render_context must be freed while this
+          // session's core is still alive; see [renderHostTeardown].
+          teardownRenderHost()
           // Native close blocks through decoder and VO teardown. Keep both the
           // SurfaceView surfaces and any attached placeholder alive until it returns.
           p.close()
@@ -2185,6 +2292,7 @@ class MpvPlayerCore private constructor(
     } else {
       // No player — safe to remove views immediately
       disposalComplete.countDown()
+      renderHostTeardown = null
       retiringPlaceholder?.close()
       Handler(Looper.getMainLooper()).postAtFrontOfQueue {
         sv?.holder?.removeCallback(this)
@@ -2199,32 +2307,4 @@ class MpvPlayerCore private constructor(
     // Reset scope for potential re-initialization
     scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   }
-}
-
-/**
- * Minimal [SurfaceHolder] wrapping a [Surface] this process never created a
- * real holder for -- a Spatial SDK panel's `surfaceConsumer` hands back a
- * raw [Surface] with no Android View/SurfaceHolder behind it (see
- * [MpvPlayerCore.attachHeadlessSurface]). Every method beyond [getSurface]
- * is unused by [MpvPlayerCore]'s [SurfaceHolder.Callback] implementation
- * today; they throw rather than silently no-op so a future caller that
- * starts relying on one notices immediately.
- */
-private class HeadlessSurfaceHolder(private val target: Surface) : SurfaceHolder {
-  override fun addCallback(callback: SurfaceHolder.Callback?) = unsupported()
-  override fun removeCallback(callback: SurfaceHolder.Callback?) = unsupported()
-  override fun isCreating(): Boolean = false
-  override fun setType(type: Int) = unsupported()
-  override fun setFixedSize(width: Int, height: Int) = unsupported()
-  override fun setSizeFromLayout() = unsupported()
-  override fun setFormat(format: Int) = unsupported()
-  override fun setKeepScreenOn(screenOn: Boolean) = unsupported()
-  override fun lockCanvas(): android.graphics.Canvas = unsupported()
-  override fun lockCanvas(dirty: android.graphics.Rect?): android.graphics.Canvas = unsupported()
-  override fun unlockCanvasAndPost(canvas: android.graphics.Canvas?) = unsupported()
-  override fun getSurfaceFrame(): android.graphics.Rect = unsupported()
-  override fun getSurface(): Surface = target
-
-  private fun unsupported(): Nothing =
-    throw UnsupportedOperationException("HeadlessSurfaceHolder only supports getSurface()")
 }

@@ -14,26 +14,22 @@ import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 
 /**
  * Builds the [PanelRegistration] for the theater's video panel: a
- * [VideoSurfacePanelRegistration]. The `Readable` variant was tried first
- * (for a panel-level post-process shader) but its surface rejects
- * direct MediaCodec hwdec output -- mpv's mediacodec vo fails with
- * "Failed to create HW uploader for format yuv420p" / "Could not
- * initialize video chain" against it, falls back to vo=gpu, and even that
- * renders nothing visible (black panel, audio still playing) -- confirmed
- * on-device. `VideoSurfacePanelRegistration` is what the official
- * `MediaPlayerSample` uses and is the direct-hwdec-output surface type.
+ * [VideoSurfacePanelRegistration], the type the official `MediaPlayerSample`
+ * uses. Its Surface is the target of the app's render-API pass rather than a
+ * `vo`'s `wid`: `MpvPlayerCore.setRenderSurface` makes it the window surface of
+ * an EGL context this app owns, mpv renders the decoded frame into an FBO we
+ * own, and our own shader warps/packs that frame onto this Surface
+ * (`android/libmpv/src/main/cpp/render_gl.cpp`, HANDOFF_RENDER_API.md).
  *
- * The pseudo-3D shader therefore does not post-process this panel's
- * surface at all: it runs inside the theater session's own mpv vo chain
- * as a user shader (`glsl-shaders`), which is what makes the panel
- * registration type irrelevant to it. See
- * [Theater3DBridge.TheaterOpenRequest.shaderPath] and
- * `TheaterMpvSession.openRequestedMedia`.
+ * That is why the registration type no longer decides what can be done to the
+ * frame. Under the `vo` path it did: the `Readable` variant rejected the
+ * fork's direct hwdec output ("Failed to create HW uploader for format
+ * yuv420p"), and the only place a shader could run was mpv's user-shader
+ * chain, which can only consume static TEXTURE bytes read once at parse time.
  *
- * Real per-eye stereo comes entirely from [StereoModeResolver]: mpv
- * decodes the source's already-combined SBS/OU frame untouched into this
- * Surface, and the compositor splits it per eye per [StereoMode]. See
- * PLAN_3D.md 1.5.
+ * Real per-eye stereo still comes entirely from [StereoModeResolver]: the frame
+ * the app presents is an SBS (or OU) pair, and the compositor splits it per
+ * eye per [StereoMode]. See PLAN_3D.md 1.5.
  */
 object Theater3DPanel {
   /**

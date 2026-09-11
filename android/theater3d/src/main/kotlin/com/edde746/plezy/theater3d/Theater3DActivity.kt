@@ -272,9 +272,10 @@ class Theater3DActivity : AppSystemActivity() {
     })
     column.addView(transport)
 
-    // Row 4: depth strength. Only meaningful when a depth shader is in the
-    // chain; hidden for real SBS/OU passthrough, where it would do nothing.
-    if (request?.shaderPath != null) {
+    // Row 4: depth strength. Only meaningful when the render pass synthesizes
+    // depth at all; hidden for real SBS/OU passthrough, where the frame is
+    // copied through and there is nothing to steer.
+    if (request?.synthetic == true) {
       val strengthRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -294,9 +295,15 @@ class Theater3DActivity : AppSystemActivity() {
         setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
           override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
             strengthLabel?.text = "Depth ${progress * 100 / STRENGTH_SCALE}%"
-            // Applied on release only: each change rewrites the shader and
-            // forces mpv to recompile the chain, which would stutter if it
-            // ran for every intermediate position during a drag.
+            // Applied on every step, including mid-drag: strength is a shader
+            // uniform in the app's own render pass, so the change lands on the
+            // next frame -- the slider is a live control now, where it used to
+            // have to wait for release to avoid recompiling mpv's shader chain
+            // per intermediate position.
+            if (fromUser) {
+              currentStrength = progress.toDouble() / STRENGTH_SCALE
+              listener?.onStrengthChanged(currentStrength)
+            }
           }
 
           override fun onStartTrackingTouch(bar: SeekBar) = Unit

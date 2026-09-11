@@ -212,6 +212,18 @@ class MpvPlayer private constructor(
 
     @JvmStatic private external fun nativeObserveProperty(session: Long, name: String, format: Int)
 
+    // Render API (render_gl.cpp). Unlike every entry above, these are called
+    // from :app's theater path through MpvRenderHost, and the Surface they take
+    // is the compositor's own rather than a SurfaceView's.
+
+    /** 0 on success, else a negative mpv error; nothing is left created on failure. */
+    @JvmStatic internal external fun nativeRenderCreate(session: Long, surface: Surface, vertexShader: String, fragmentShader: String): Int
+
+    /** Frees the render context and its EGL/GL state. Safe to call with none live. */
+    @JvmStatic internal external fun nativeRenderDestroy(session: Long)
+
+    @JvmStatic internal external fun nativeRenderSetStrength(session: Long, strength: Float, synthetic: Boolean): Int
+
     internal fun setOptionString(session: Long, name: String, value: String): Int = nativeSetOptionString(session, name, value)
 
     internal fun requestLogMessages(session: Long, level: String) {

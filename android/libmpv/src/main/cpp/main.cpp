@@ -23,6 +23,7 @@ extern "C" {
 #define ARRAYLEN(a) (sizeof(a) / sizeof(a[0]))
 
 void render_cleanup(JNIEnv* env);
+void render_gl_shutdown(JNIEnv* env);
 
 extern "C" {
 jni_func(jlong, nativeCreate, jobject appctx);
@@ -102,6 +103,11 @@ static void destroy_locked(JNIEnv* env, mpv_handle* local_mpv) {
   }
   // The MediaCodec VO can retain the Surface until final decoder teardown.
   // Keep its JNI refs alive for the entire blocking termination.
+  //
+  // A surviving render host (its Kotlin-side teardown lost the race) must have
+  // its mpv_render_context freed while the core is still alive -- render.h
+  // makes freeing it after mpv_terminate_destroy() undefined behaviour.
+  render_gl_shutdown(env);
   mpv_terminate_destroy(local_mpv);
   render_cleanup(env);
 }

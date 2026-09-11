@@ -148,6 +148,45 @@ void main() {
     }
   });
 
+  /// The theater's render-API pair is the one shader in this app that is *not*
+  /// an mpv user shader: `render_gl.cpp` compiles it, and it resolves these
+  /// exact names with glGetUniformLocation/glGetAttribLocation, failing setup
+  /// outright if any is missing. So the names are an interface between two
+  /// languages, and a rename on either side silently kills theater mode.
+  group('theater 3D warp shaders (render API)', () {
+    test('loads both stages and declares the inputs the native pass resolves', () async {
+      final shaders = await ShaderAssetLoader.loadTheater3DWarpShaders();
+      expect(shaders, isNotNull);
+
+      // render_gl.cpp's setup_gl_objects() requires all five.
+      expect(shaders!.vertex, contains('aPos'));
+      for (final uniform in ['uFrame', 'uStrength', 'uResolution', 'uSynthetic']) {
+        expect(shaders.fragment, contains(uniform), reason: 'render_gl.cpp resolves $uniform');
+      }
+      // The vertex stage must hand the fragment stage an interpolated
+      // coordinate under the name the fragment stage declares.
+      expect(shaders.vertex, contains('vUv'));
+      expect(shaders.fragment, contains('vUv'));
+    });
+
+    /// The two pseudo-3D implementations live side by side and do much the same
+    /// maths: `pseudo3d/Pseudo3DSbs.glsl` is mpv's, `theater3d/*` is ours. This
+    /// pins the difference so an edit meant for one cannot silently land in the
+    /// other -- mpv's parser would reject GLSL ES 3.0, and our GL would reject
+    /// a `hook()` body.
+    test('are plain GLSL ES 3.0, with no mpv user-shader metadata', () async {
+      final shaders = await ShaderAssetLoader.loadTheater3DWarpShaders();
+      expect(shaders, isNotNull);
+
+      for (final source in [shaders!.vertex, shaders.fragment]) {
+        expect(source.trimLeft(), startsWith('#version 300 es'));
+        expect(source, isNot(contains('//!')));
+      }
+      expect(shaders.fragment, isNot(contains('hook(')));
+      expect(shaders.fragment, contains('fragColor'));
+    });
+  });
+
   test('materializes the pseudo-3D shader with the requested strength baked into its source', () async {
     final shaderPath = await ShaderAssetLoader.materializePseudo3DShader(0.75);
     expect(shaderPath, isNotNull);

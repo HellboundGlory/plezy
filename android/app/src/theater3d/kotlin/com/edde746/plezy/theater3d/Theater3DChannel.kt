@@ -71,6 +71,13 @@ class Theater3DChannel(
       return
     }
 
+    val vertexShader = args["vertexShader"] as? String
+    val fragmentShader = args["fragmentShader"] as? String
+    if (vertexShader == null || fragmentShader == null) {
+      result.error("bad_args", "theater3d open requires 'vertexShader' and 'fragmentShader'", null)
+      return
+    }
+
     val request =
       Theater3DBridge.TheaterOpenRequest(
         uri = uri,
@@ -79,7 +86,11 @@ class Theater3DChannel(
         audioTrackId = (args["audioTrackId"] as? Number)?.toInt(),
         subtitleTrackId = (args["subtitleTrackId"] as? Number)?.toInt(),
         stereoMode = args["stereoMode"] as? String ?: "off",
-        shaderPath = args["shaderPath"] as? String,
+        vertexShader = vertexShader,
+        fragmentShader = fragmentShader,
+        // Absent means "pass the frame through", which is the safe reading: a
+        // passthrough never invents depth for content that already has it.
+        synthetic = args["synthetic"] as? Boolean ?: false,
         strength = (args["strength"] as? Number)?.toDouble() ?: 0.5,
         // Absent means "leave mpv's default", which is software. Callers on
         // this path always send it; the fallback only keeps the contract

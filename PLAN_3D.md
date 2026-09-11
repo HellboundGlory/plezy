@@ -406,12 +406,12 @@ why the artifact-prone `fwidth` term had to go and why what remains is stable
 but shallow. Real structure needs a model. Researched on 2026-09-11; the
 findings below are the scoping decision, not an estimate.
 
-**The migration itself is written up separately — see
-[`HANDOFF_RENDER_API.md`](HANDOFF_RENDER_API.md).** It also raises a decision
-this section does not: the render API costs the fork `vo=mediacodec`'s
-zero-copy path (straight MediaCodec→compositor, no GLES pass, HDR dataspace
-intact), and extending that vo instead is a genuine alternative. Read §0 of the
-handoff before committing to either.
+**The migration itself was written up separately — see
+[`HANDOFF_RENDER_API.md`](HANDOFF_RENDER_API.md) — and shipped 2026-09-11 on
+the theater path (§8 there is the as-built record).** What follows in this
+section is the research that motivated it; two of its statements are now
+superseded and are marked below rather than edited, because the reasoning still
+explains the code.
 
 ### The model is the easy part
 
@@ -445,7 +445,16 @@ frame, and a shader parameter cannot carry a texture. The current theater path
 is exactly that mechanism — `glsl-shaders` on the session's own mpv instance —
 so model output has nowhere to go on it.
 
-That forces one of:
+**Superseded 2026-09-11: option 1 was taken and is implemented** — see
+`HANDOFF_RENDER_API.md` §8. The paragraph above still describes the old
+theater path accurately (and the new one does not use a user shader at all),
+but the cost it implies was smaller than it looks: zero-copy hardware decode
+*turns out* to survive the migration, since the pinned libmpv compiles in
+`hwdec_aimagereader.c` and mpv therefore maps MediaCodec buffers into GL
+through `AImageReader` + `GL_OES_EGL_image_external`. The remaining real costs
+are the extra per-frame GLES pass and 8-bit/4:2:0 loss in our FBO.
+
+That said, the original choice stood as follows:
 
 1. **mpv's render API** (`mpv_render_context_create` with
    `MPV_RENDER_API_TYPE_OPENGL`, then `mpv_render_context_render` into an FBO
@@ -542,6 +551,57 @@ Do not fold any of this into the v1 estimate.
 ---
 
 ## Changelog
+
+- **2026-09-11 — Render-API migration implemented (theater path only).** The
+  theater session now renders through **mpv's render API** instead of a `vo`:
+  mpv draws into an FBO this app owns, this app's own GLSL ES 3.0 pass warps
+  and packs the frame, and the app presents it to the panel's Surface from its
+  own EGL context. Full as-built record, design decisions, evidence and the
+  on-device list: **`HANDOFF_RENDER_API.md` §8**.
+
+  Why it was worth it: a per-frame input had nowhere to go on the old path. An
+  mpv user shader's `TEXTURE` blocks are static bytes read once at parse time,
+  so a depth model's output could not reach one. Everything Phase 2 fought also
+  disappears with the mechanism — no `PARAM` rejection, no `HOOKED_pos`
+  orientation question, no `bstr_split_tok` header-marker trap, no path-keyed
+  shader cache, and no per-strength file rewrite: **strength is a shader
+  uniform now, so the in-scene slider is live during a drag** instead of
+  taking effect on the next launch.
+
+  Two costs the handoff predicted turned out to be smaller or different:
+  - **Zero-copy hardware decode survives.** The pinned libmpv compiles in
+    `hwdec_aimagereader.c` and registers it as the `aimagereader` interop
+    driver, so `hwdec=mediacodec` still reaches GL through `AImageReader` +
+    `GL_OES_EGL_image_external`. The Dart side's `mediacodec-copy` downgrade is
+    therefore gone — it existed only to hand a *user shader* ordinary textures.
+  - **Timing stays mpv's.** No `MPV_RENDER_PARAM_ADVANCED_CONTROL`: reading
+    `vo_libmpv.c` shows `flip_page()` releases the wait inside
+    `mpv_render_context_render()`, and `report_swap` is genuinely optional.
+  - The costs that are real: one extra GLES pass per frame on a headset, and
+    the FBO is `GL_RGBA8`, so HDR is tone-mapped and truncated rather than
+    preserved. The flat player stays on the `vo` path untouched, so nothing
+    regressed there.
+
+  Three shader bugs were found by **measuring the shipping source on a real
+  GLES 3.2 driver**, not by reading it — the most important being that the eyes
+  disagreed about depth: tapping the *output* coordinate gave the left half the
+  depth at frame `2x` and the right half the depth at `2x - 1920`, so the same
+  scene point got two different distances and the pair read inverted where they
+  conflicted. The depth field is now indexed by the source coordinate. Both eyes
+  are verified to move inward for near content (crossed disparity) and the
+  displacement is linear in strength.
+
+  **Verified**: `glslangValidator`; shader behaviour on a real GLES driver
+  (passthrough byte-identical to the input, both eyes agree on depth, disparity
+  inward and linear); `flutter analyze` clean; full `flutter test` suite;
+  `:app:compileDebugKotlin` on default **and** `THEATER_MODE=1`;
+  `:theater3d:testDebugUnitTest`; `:libmpv:externalNativeBuildDebug`; and a full
+  `THEATER_MODE=1 flutter build apk --debug` whose APK carries both shader
+  assets and the three `nativeRender*` JNI entries in `libplayer.so`.
+  **Not verified — needs the headset**: that the Spatial panel Surface accepts
+  an EGL window surface, that `hwdec=mediacodec` reaches GL on Adreno, that the
+  compositor's Surface orientation matches the `FLIP_Y` contract, and the
+  thermal/cadence cost of the extra pass. See `HANDOFF_RENDER_API.md` §8.5.
 
 - **2026-09-08 — Phase 0 spike: PASS on Quest 3, two real platform bugs found
   and fixed along the way.** Device: Quest 3, wireless adb. 10/10 cold

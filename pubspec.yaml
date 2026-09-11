@@ -151,5 +151,9 @@ flutter:
     - assets/shaders/artcnn/
     - assets/shaders/anime4k/
     - assets/shaders/pseudo3d/
+    # Theater 3D render-API warp pair: plain GLSL ES 3.0 the native render host
+    # compiles itself, handed over as source text (no mpv user shader, no
+    # on-disk materialization). See HANDOFF_RENDER_API.md.
+    - assets/shaders/theater3d/
     - assets/player_icons/
     - assets/rating_icons/

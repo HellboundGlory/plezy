@@ -52,11 +52,48 @@ class ShaderAssetLoader {
   /// [ShaderPresetType] -- [ThreeDConfig] is an orthogonal overlay appended
   /// on top of whichever preset (including none) is already active.
   ///
-  /// This is the source template, never the path handed to mpv for playback:
-  /// strength has to be baked into a per-strength copy of it, since mpv's
-  /// `//!PARAM` mechanism is unavailable on the classic `vo=gpu` backend the
-  /// theater session prefers (see [materializePseudo3DShader]).
+  /// This file is for the **flat** player's mpv shader chain only: strength has
+  /// to be baked into a per-strength copy of it, since mpv's `//!PARAM`
+  /// mechanism is unavailable on the classic `vo=gpu` backend that chain can
+  /// land on (see [materializePseudo3DShader]). The theater's own 2D->3D path
+  /// deliberately does *not* use it -- it runs as a shader this app compiles
+  /// inside its mpv render-API pass, where strength is a uniform. See
+  /// [loadTheater3DWarpShaders] and HANDOFF_RENDER_API.md.
   static const String _pseudo3DShader = 'pseudo3d/Pseudo3DSbs.glsl';
+
+  /// The theater's render-API warp pair (HANDOFF_RENDER_API.md). Two plain
+  /// GLSL ES 3.0 stages the native render host compiles itself, unlike every
+  /// other shader here: they are handed to the platform channel as *source
+  /// text*, never written to a file, because no mpv instance ever parses them.
+  /// See [loadTheater3DWarpShaders].
+  static const String _theater3DVertexShader = 'theater3d/Pseudo3DWarp.vert.glsl';
+  static const String _theater3DFragmentShader = 'theater3d/Pseudo3DWarp.frag.glsl';
+
+  /// Reads the theater render-API shader pair out of the asset bundle.
+  ///
+  /// Returns null if either stage is missing or unreadable, which the caller
+  /// must treat as "no theater session": a session without its warp/pack
+  /// program has nothing to put on the panel.
+  static Future<({String vertex, String fragment})?> loadTheater3DWarpShaders() async {
+    try {
+      final vertex = await _readShaderAsset(_theater3DVertexShader);
+      final fragment = await _readShaderAsset(_theater3DFragmentShader);
+      if (vertex == null || fragment == null) {
+        appLogger.e('Theater 3D warp shader missing from the asset bundle: '
+            'vertex=${vertex != null}, fragment=${fragment != null}');
+        return null;
+      }
+      return (vertex: vertex, fragment: fragment);
+    } catch (e, st) {
+      appLogger.w('Failed to load theater 3D warp shaders', error: e, stackTrace: st);
+      return null;
+    }
+  }
+
+  static Future<String?> _readShaderAsset(String assetPath) async {
+    final data = await rootBundle.load('$_shaderAssetBase/$assetPath');
+    return utf8.decode(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+  }
 
   /// Get the application-owned shader cache directory, creating it if needed.
   static Future<String> _getShaderDirectory() async {
@@ -326,9 +363,16 @@ class ShaderAssetLoader {
     return source.replaceFirstMapped(pattern, (match) => '${match[1]}$value${match[3]}');
   }
 
-  /// Get the shader file path for the heuristic pseudo-3D SBS shader
-  /// (PLAN_3D.md Phase 2), with [strength] baked into its source. Returns a
-  /// list containing the single materialized path, or empty on failure.
+  /// The heuristic pseudo-3D SBS shader as an mpv `glsl-shaders` entry, with
+  /// [strength] baked into its source. Returns the single materialized path, or
+  /// an empty list on failure.
+  ///
+  /// **Flat player only.** The Quest theater path does not use this: it runs
+  /// its own GL pass inside mpv's render API, where strength is a uniform (see
+  /// [loadTheater3DWarpShaders] and HANDOFF_RENDER_API.md). This mechanism
+  /// exists for the flat player's shader chain, which can land on classic
+  /// `vo=gpu` and therefore has to bake strength into the source -- mpv's
+  /// `//!PARAM` block is a libplacebo feature that vo=gpu rejects outright.
   static Future<List<String>> getPseudo3DShaders({required double strength}) async {
     final shaderPath = await materializePseudo3DShader(strength);
     if (shaderPath == null) return [];
@@ -395,6 +439,9 @@ class ShaderAssetLoader {
   /// Pass null for already-3D passthrough content -- it needs [ThreeDMode]
   /// only to select `stereoMode`, never this shader (see
   /// `ShaderService.applyPreset`).
+  /// The `glsl-shaders` chain for [preset], with the pseudo-3D overlay appended
+  /// when [threeDConfig] asks for one. See [getPseudo3DShaders] for why this
+  /// path bakes strength into the shader source and the theater path does not.
   static Future<List<String>> getShadersForPreset(ShaderPreset preset, {ThreeDConfig? threeDConfig}) async {
     final baseShaders = await _shadersForPresetType(preset);
     if (threeDConfig == null || threeDConfig.mode == ThreeDMode.off) return baseShaders;

@@ -748,31 +748,41 @@ time — see the note above.
 **What actually runs inside the theater session** is a *second*, headless
 `MpvPlayerCore` (`TheaterMpvSession`), not the flat player's
 `shader_service.dart` path — the two mpv instances are independent, and
-only the flat one is driven over a `MethodChannel`. So the two 3D tiers
-are wired in different places:
+only the flat one is driven over a `MethodChannel`. Since 2026-09-11 that
+second core renders through **mpv's render API** rather than a `vo`: mpv
+draws into an FBO the app owns, the app's own GLSL ES 3.0 pass
+(`assets/shaders/theater3d/`) warps and packs the frame, and the app
+presents it to the panel's `Surface` from its own EGL context. The two 3D
+tiers are therefore two *branches of one shader*, not two mechanisms:
 
 | Mode | Mechanism |
 | ---- | --------- |
-| `sbs` / `ou`, and `auto` on a filename-detected 3D master | Nothing runs in mpv. The compositor splits the frame the way the source is already packed (`StereoModeResolver`). |
-| `auto` on everything else (`synthetic`) | `ShaderAssetLoader.materializePseudo3DShader(strength)` writes a per-strength copy of `assets/shaders/pseudo3d/Pseudo3DSbs.glsl` into the app cache; its path crosses the bridge as `shaderPath` and `TheaterMpvSession` appends it to the session's `glsl-shaders` before `loadfile`. The shader runs inside mpv's own vo chain. |
+| `sbs` / `ou`, and `auto` on a filename-detected 3D master | The pass copies mpv's frame through untouched, and the compositor splits it per eye the way the source is already packed (`StereoModeResolver`). |
+| `auto` on everything else (`synthetic`) | The same pass synthesizes a depth field from the frame and packs an SBS pair for the compositor to split. |
 
-Strength is baked into that shader copy rather than declared as an mpv
-shader parameter because a `PARAM` metadata block is a libplacebo
-(`vo=gpu-next`) feature: classic `vo=gpu`'s user-shader parser has no case
-for it, so it reports `Unrecognized command 'PARAM strength'` and abandons
-the *entire shader file* — the hook never registers and the panel silently
-raw-splits a flat frame. The theater session's vo is chosen per file
-(`gpu,gpu-next` with `gpu` primary), so the shader must parse on both. The
-strength is therefore a plain GLSL `const float STRENGTH` that the loader
-substitutes. Changing the strength slider takes effect on the next theater
-launch — which is when it is set anyway.
+Because the shader is the app's own program rather than an mpv user
+shader, the strength slider is a plain **uniform**: it lands on the next
+frame, with no recompile, no per-strength file, and no exposure to mpv's
+path-keyed shader cache. That retires the whole class of problems the
+previous implementation fought — the `PARAM` rejection on classic
+`vo=gpu`, the re-append-to-recompile dance, and the atomic-rename staging
+those needed. The per-strength baking still exists, but only for the flat
+player's own `glsl-shaders` chain, which does still land on `vo=gpu`; see
+`ShaderAssetLoader.getPseudo3DShaders`.
+
+Design, evidence and the remaining on-device questions are in
+`HANDOFF_RENDER_API.md` §8.
 
 **Verified on-device**: real frame-packed SBS masters display correctly in
 `sbs` and `auto` (confirmed on a Quest 3 by eye, 2026-09-11), as do `ou`
-and the panel/controls rendering and clean exit→resume handback. **Not yet
-verified on-device**: how the *heuristic* tier looks — the shader is wired
-and its maths is unit-tested, but its depth proxy is a cheap heuristic and
-its quality on real footage has not been judged on the headset.
+and the panel/controls rendering and clean exit→resume handback — *on the
+pre-migration `vo` path*. **Not yet verified on-device at all**: the
+render-API path itself. The shader's geometry and disparity are verified
+against a real GLES driver off-device, but whether the Spatial panel's
+`Surface` accepts an EGL window surface, whether `hwdec=mediacodec` reaches
+GL on Adreno, and how the picture is oriented and how it performs
+thermally are all open. See `HANDOFF_RENDER_API.md` §8.5 for the ordered
+list and what each symptom would mean.
 
 ## Known considerations
 
@@ -847,8 +857,9 @@ upstream.
   silent outcome otherwise) and closes it in `onDestroy`
 - `android/app/src/main/kotlin/com/edde746/plezy/mpv/MpvPlayerCore.kt` — a
   `headless` constructor parameter that skips all Activity-window/SurfaceView
-  setup, plus `attachHeadlessSurface`/`detachHeadlessSurface` for driving a
-  Spatial SDK panel's compositor-owned `Surface` (PLAN_3D.md Phase 1.4)
+  setup, plus a `renderApi` parameter and `setRenderSurface` for driving a
+  Spatial SDK panel's compositor-owned `Surface` through mpv's render API
+  (PLAN_3D.md Phase 1.4; `HANDOFF_RENDER_API.md` §8)
 - `lib/widgets/tv_browse_rail.dart` — a `Listener` that turns Horizon's
   synthesized mouse wheel into hub movement (see "Scrolling with the
   controller")

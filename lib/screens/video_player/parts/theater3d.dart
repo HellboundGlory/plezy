@@ -31,40 +31,30 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
     await currentPlayer.pause();
 
     final stereoMode = _resolveTheaterStereoMode(mode);
-    // Only the synthetic (heuristic-depth) mode runs a shader inside the
-    // theater session: real SBS/OU passthrough already carries parallax, and
-    // re-processing it would split the split rather than add depth. The
-    // strength is baked into the shader source by the loader because mpv can
-    // only override a `//!PARAM` on vo=gpu-next, while the theater session's
-    // GL backend is picked per file -- see
-    // `ShaderAssetLoader.materializePseudo3DShader`.
-    String? shaderPath;
-    if (stereoMode == TheaterStereoMode.synthetic) {
-      shaderPath = await ShaderAssetLoader.materializePseudo3DShader(strength);
-      if (shaderPath == null) {
-        appLogger.e(
-          'Pseudo-3D shader unavailable; without it the compositor would show each eye a '
-          'different half of the flat frame, so theater mode will look cropped and doubled',
-        );
-      }
-    }
+
+    // Every mode runs this app's own GL program on mpv's output; only what it
+    // *does* differs. Real SBS/OU passthrough copies the frame through, since
+    // the source already carries parallax and re-processing it would split the
+    // split rather than add depth; the synthetic mode invents a depth field and
+    // packs a side-by-side pair. The shaders are plain asset text now -- no
+    // per-strength bake, no file for mpv to parse, no shader cache to defeat.
+    final shaders = await ShaderAssetLoader.loadTheater3DWarpShaders();
+    final synthetic = stereoMode == TheaterStereoMode.synthetic;
 
     // Decoder backend for the theater session's own mpv core. It must be
     // carried explicitly: the flat player writes `hwdec` from Dart
     // (`_getHwdecValue` below), and the theater core is a second, headless
     // session that no Dart property write reaches -- so left alone it sat on
-    // mpv's default of `no` and decoded on the CPU, which is what made
-    // theater mode play at a fraction of real time and drift out of sync
-    // with the audio.
+    // mpv's default of `no` and decoded on the CPU, which is what made theater
+    // mode play at a fraction of real time and drift out of sync with the
+    // audio.
     //
-    // `mediacodec-copy` rather than zero-copy `mediacodec` whenever a shader
-    // is in the chain: zero-copy hands mpv external OES textures, while
-    // `-copy` still decodes on MediaCodec but returns ordinary frames mpv
-    // uploads as normal textures -- the deterministic pairing with a user
-    // shader. With no shader (real SBS/OU passthrough) the full fallback list
-    // is used, matching what the flat player runs on this device.
-    var hwdec = _getHwdecValue(SettingsService.instance.read(SettingsService.enableHardwareDecoding));
-    if (shaderPath != null && hwdec != 'no') hwdec = 'mediacodec-copy';
+    // The value is the same one the flat player uses, zero-copy included: the
+    // render-API pass is a GL pass this app owns, and mpv reaches GL from
+    // MediaCodec through its `aimagereader` interop. The old
+    // `mediacodec-copy` downgrade here existed only to hand a *user shader*
+    // ordinary textures, which no longer exists.
+    final hwdec = _getHwdecValue(SettingsService.instance.read(SettingsService.enableHardwareDecoding));
 
     late final StreamSubscription<TheaterExitEvent> exitSubscription;
     late final StreamSubscription<TheaterErrorEvent> errorSubscription;
@@ -83,12 +73,22 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
       unawaited(errorSubscription.cancel());
     }
 
+    if (shaders == null) {
+      settle();
+      appLogger.e('Theater 3D shader assets unavailable; theater mode cannot render');
+      if (mounted) {
+        showErrorSnackBar(context, t.videoControls.theaterModeFailed(reason: 'shader assets missing'));
+      }
+      await resumeFlatPlayer(resumePosition);
+      return;
+    }
+
     exitSubscription = _theater3d.onExit.listen((event) {
       settle();
       // The in-scene depth control has no way back to prefs on its own, so
       // whatever it was left at becomes the remembered strength for this
       // title -- same scope the settings sheet writes to.
-      if (stereoMode == TheaterStereoMode.synthetic) {
+      if (synthetic) {
         unawaited(ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDStrength, _currentMetadata, event.strength));
       }
       unawaited(resumeFlatPlayer(Duration(milliseconds: event.positionMs)));
@@ -105,7 +105,9 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
         headers: _lastOpenedHeaders ?? const {},
         position: resumePosition,
         stereoMode: stereoMode,
-        shaderPath: shaderPath,
+        vertexShader: shaders.vertex,
+        fragmentShader: shaders.fragment,
+        synthetic: synthetic,
         strength: strength,
         hwdec: hwdec,
       );

@@ -7,7 +7,7 @@ project("libmpv")
 add_library(
         player
         SHARED
-        main.cpp render.cpp log.cpp jni_utils.cpp property.cpp event.cpp
+        main.cpp render.cpp render_gl.cpp log.cpp jni_utils.cpp property.cpp event.cpp
 )
 
 # Prebuilt libraries extracted from the pinned mpv-build per-ABI tarballs by the
@@ -42,4 +42,10 @@ set_target_properties(
 # vendored tree only carries FFmpeg's libavcodec/jni.h (see include/README.md).
 include_directories( ${MPV_PREBUILT_ROOT}/include ${CMAKE_CURRENT_SOURCE_DIR}/include )
 
-target_link_libraries( player mpv avcodec log )
+# render_gl.cpp owns the mpv render-API host: its own EGL context, GLES render
+# pass, and the ANativeWindow a panel Surface is unwrapped into.
+find_library( egl_lib EGL )
+find_library( gles_lib GLESv3 )
+find_library( android_lib android )
+
+target_link_libraries( player mpv avcodec log ${egl_lib} ${gles_lib} ${android_lib} )

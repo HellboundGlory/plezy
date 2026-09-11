@@ -42,7 +42,12 @@ void main() {
     });
   });
 
-  test('open sends every field the native loadfile/stereo/shader path needs', () async {
+  // A stand-in for the two asset sources, so the test asserts what crosses the
+  // channel rather than what the shaders happen to contain today.
+  const vertexShader = '#version 300 es\nin vec2 aPos;\n';
+  const fragmentShader = '#version 300 es\nprecision highp float;\nout vec4 c;\n';
+
+  test('open sends every field the native loadfile/stereo/render path needs', () async {
     MethodCall? call;
     messenger.setMockMethodCallHandler(const MethodChannel(_methodChannelName), (methodCall) async {
       call = methodCall;
@@ -57,7 +62,9 @@ void main() {
       audioTrackId: 2,
       subtitleTrackId: 3,
       stereoMode: TheaterStereoMode.synthetic,
-      shaderPath: '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      synthetic: true,
       strength: 0.75,
       hwdec: 'mediacodec-copy',
     );
@@ -70,13 +77,15 @@ void main() {
       'audioTrackId': 2,
       'subtitleTrackId': 3,
       'stereoMode': 'synthetic',
-      'shaderPath': '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      'vertexShader': vertexShader,
+      'fragmentShader': fragmentShader,
+      'synthetic': true,
       'strength': 0.75,
       'hwdec': 'mediacodec-copy',
     });
   });
 
-  test('open defaults to off/no tracks/zero position and no shader when unset', () async {
+  test('open defaults to off/no tracks/zero position and a passthrough program when unset', () async {
     MethodCall? call;
     messenger.setMockMethodCallHandler(const MethodChannel(_methodChannelName), (methodCall) async {
       call = methodCall;
@@ -84,7 +93,14 @@ void main() {
     });
 
     final bridge = Theater3DBridge();
-    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off, hwdec: 'no');
+    await bridge.open(
+      uri: 'file:///movie.mp4',
+      stereoMode: TheaterStereoMode.off,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      synthetic: false,
+      hwdec: 'no',
+    );
 
     expect(call?.arguments, {
       'uri': 'file:///movie.mp4',
@@ -93,7 +109,9 @@ void main() {
       'audioTrackId': null,
       'subtitleTrackId': null,
       'stereoMode': 'off',
-      'shaderPath': null,
+      'vertexShader': vertexShader,
+      'fragmentShader': fragmentShader,
+      'synthetic': false,
       'strength': 0.5,
       'hwdec': 'no',
     });
@@ -107,9 +125,20 @@ void main() {
     });
 
     final bridge = Theater3DBridge();
-    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.synthetic, hwdec: 'no');
+    await bridge.open(
+      uri: 'file:///movie.mp4',
+      stereoMode: TheaterStereoMode.synthetic,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      synthetic: true,
+      hwdec: 'no',
+    );
 
+    // The compositor contract (stereoMode) and the shader's own input
+    // (synthetic) are separate fields, and both must reach the native side:
+    // synthetic packs the SBS pair the compositor then splits per eye.
     expect((call?.arguments as Map)['stereoMode'], 'synthetic');
+    expect((call?.arguments as Map)['synthetic'], isTrue);
   });
 
   test('a caller error (already_open) surfaces as a PlatformException', () async {
@@ -119,7 +148,14 @@ void main() {
 
     final bridge = Theater3DBridge();
     await expectLater(
-      () => bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off, hwdec: 'no'),
+      () => bridge.open(
+        uri: 'file:///movie.mp4',
+        stereoMode: TheaterStereoMode.off,
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        synthetic: false,
+        hwdec: 'no',
+      ),
       throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'already_open')),
     );
   });

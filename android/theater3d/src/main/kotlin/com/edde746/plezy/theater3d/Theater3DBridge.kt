@@ -42,20 +42,23 @@ object Theater3DBridge {
    * android/app's Theater3DChannel, which builds this request, never needs
    * a Spatial SDK dependency either.
    *
-   * [shaderPath] is an already-materialized mpv user-shader file for
-   * [TheaterMpvSession] to append to the headless session's `glsl-shaders`
-   * before its `loadfile`, or null for real SBS/OU passthrough content.
-   * It is a path rather than a strength value because mpv's `PARAM` metadata
-   * is a libplacebo (vo=gpu-next) feature, and the theater session's GL
-   * backend is chosen per file -- so the strength is baked into the shader's
-   * source by Dart (`ShaderAssetLoader.materializePseudo3DShader`, which also
-   * owns the extraction directory), and the native side only ever consumes a
-   * file path.
+   * [vertexShader] / [fragmentShader] are the GLSL ES 3.0 sources the app
+   * compiles and runs *after* mpv renders a frame, in the render-API pipeline
+   * (`android/libmpv/src/main/cpp/render_gl.cpp`, HANDOFF_RENDER_API.md).
+   * They are ordinary strings rather than a path because nothing else reads
+   * them: this is the app's own GL program, not an mpv user shader, so there is
+   * no file for mpv to parse and no cache to defeat.
    *
-   * [strength] is the numeric value that bake used (0.0-1.0). It rides
-   * alongside the path purely so the in-scene controls can show the current
-   * setting and re-bake on change without parsing it back out of the shader
-   * file; the path alone would be enough to play.
+   * [synthetic] selects what that program does with the frame: `true`
+   * synthesizes a depth field from the picture and packs the result as a
+   * side-by-side pair, `false` passes the frame through untouched for real
+   * SBS/OU sources, which already carry parallax. It mirrors
+   * [stereoMode]'s `synthetic` value, and is carried separately because the
+   * shader needs it as a uniform whatever the compositor's stereo mode is.
+   *
+   * [strength] is the depth strength (0.0-1.0). Under the render API it is a
+   * plain shader uniform, so the in-scene control changes the picture on the
+   * next frame with no rewrite and no recompile.
    *
    * [hwdec] is the mpv `hwdec` value to apply before the load, e.g.
    * `"mediacodec,mediacodec-copy"` or `"no"`. It has to be carried
@@ -71,7 +74,9 @@ object Theater3DBridge {
     val audioTrackId: Int?,
     val subtitleTrackId: Int?,
     val stereoMode: String,
-    val shaderPath: String?,
+    val vertexShader: String,
+    val fragmentShader: String,
+    val synthetic: Boolean,
     val strength: Double,
     val hwdec: String
   )
@@ -91,9 +96,13 @@ object Theater3DBridge {
 
   interface Listener {
     /**
-     * The panel's compositor-owned Surface is ready for decoded frames.
-     * [width]/[height] are the fixed pixel dimensions the panel was
-     * configured with ([Theater3DPanel.PANEL_PIXEL_WIDTH]/`_HEIGHT`).
+     * The panel's compositor-owned Surface is ready. [width]/[height] are the
+     * fixed pixel dimensions the panel was configured with
+     * ([Theater3DPanel.PANEL_PIXEL_WIDTH]/`_HEIGHT`).
+     *
+     * The Surface is the render-API target, not a `vo`'s `wid`: the listener
+     * hands it to `MpvPlayerCore.setRenderSurface`, which makes it the window
+     * surface of the app's own EGL context.
      */
     fun onSurfaceReady(surface: Surface, width: Int, height: Int)
 
@@ -128,9 +137,9 @@ object Theater3DBridge {
      * Live depth-strength change from the in-scene control, 0.0-1.0.
      *
      * This is a *display* change the session can make on its own: strength is
-     * baked into the user shader's source, so the session rewrites that one
-     * constant and recompiles the chain. Persisting it is the caller's job,
-     * which is why the exit payload carries the final value back to Dart.
+     * a shader uniform in the app's render-API pass, so the session writes it
+     * and the next presented frame reflects it. Persisting it is the caller's
+     * job, which is why the exit payload carries the final value back to Dart.
      */
     fun onStrengthChanged(strength: Double)
 

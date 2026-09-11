@@ -1,6 +1,10 @@
-# HANDOFF — mpv render-API migration (for real depth-based stereo)
+# mpv render-API migration (for real depth-based stereo)
 
-**Status: NOT STARTED. Plan only. Written 2026-09-11.**
+**Status: SHIPPED 2026-09-11. Theater path only; the flat player stays on `vo`.**
+
+Sections 0–2 are the original plan, kept because the reasoning still explains
+the code. **§8 records what was actually built, what differed, and what is
+still unverified on-device — read that first.**
 
 Goal: replace the theater session's `vo`-based rendering with mpv's **render
 API** (`mpv_render_context`), so that video frames arrive in a GL context *we*
@@ -14,6 +18,14 @@ migration itself.
 ---
 
 ## 0. Decision to confirm BEFORE writing any code
+
+> **Resolved 2026-09-11: the render API was chosen.** The cost it names below
+> was accepted deliberately, and the two items it flagged as most likely to
+> bite were both settled by reading mpv 0.41.0's own source rather than by
+> guessing — zero-copy hardware decode turns out to survive
+> (`hwdec_aimagereader.c` + `GL_OES_EGL_image_external`, compiled into the
+> pinned libmpv), and presentation timing stays mpv's without
+> `ADVANCED_CONTROL`. See §8 for the evidence.
 
 This migration has a cost that is easy to miss, and it is large enough to
 warrant a deliberate call rather than a default.
@@ -359,17 +371,180 @@ Reusable techniques from Phases 0–2; all of them earned their place.
 
 ## 7. Open questions
 
-1. **Render API vs extending the fork vo** (§0) — the blocking decision.
-2. **Who owns presentation timing.** `MPV_RENDER_PARAM_ADVANCED_CONTROL`
-   changes it; the fork currently owns cadence/PTS/swap lead. Pick one owner.
-3. **Single or dual GL context.** The Spatial SDK compositor, mpv's interop and
-   our FBO may each want a context; sharing/`EGL_KHR_fence_sync` semantics must
-   be settled before coding.
-4. **Does 10-bit/HDR survive** the render-API path on Adreno? Unmeasured.
+Each was either answered by this migration or is now a narrower question. The
+answers are all in §8; this list is kept so the questions themselves stay
+visible.
+
+1. ~~**Render API vs extending the fork vo** (§0).~~ Decided: render API. See
+   §0's note and §8.
+2. ~~**Who owns presentation timing.**~~ Answered: mpv does, and the
+   handshake is documented in `render_gl.cpp`'s header comment. `report_swap`
+   is optional. **Still to measure**: whether mpv's own cadence (`vo-delay`,
+   the fork's prepare/draw/flip lead) is actually good enough for the theater
+   path, since the fork's timing work no longer applies to it.
+3. ~~**Single or dual GL context.**~~ Answered by construction: exactly one,
+   created on the JNI thread, owned by the GL thread, and used for both mpv's
+   render pass and ours. No sharing, no fence sync, no second context. The
+   Spatial SDK compositor never sees a GL context of ours — it only receives
+   the finished Surface.
+4. **Does 10-bit/HDR survive** the render-API path on Adreno? Unmeasured, and
+   now the largest correctness unknown of this change. The FBO is `GL_RGBA8`
+   (`render_gl.cpp`), so 10-bit output is being truncated to 8-bit per channel
+   by *our* target, not by any failure in mpv. HDR content will tone-map
+   through `gl_video` as usual, but do not expect HDR to be preserved as such
+   until the target format is revisited.
 5. **Thermals.** A per-frame GLES pass per eye at 1920×1080 on XR2 Gen2 is not
-   free. Measure before committing to full-rate; the flat player's `vo` path
-   exists precisely to avoid this.
-6. **Where depth inference runs.** Same GPU as compositing ⇒ contention. A
-   separate thread with a bounded queue, and a defined drop policy, is required;
-   NNAPI/Hexagon may be preferable to GPU for exactly this reason.
-7. **Subtitle strategy** for the theater path (§3.4).
+   free. Now measurable rather than hypothetical: `render_gl.cpp` logs a frame
+   count every 300 frames, so the render loop's liveness (and, with a Perfetto
+   or simpleperf trace, its cost) can be read off the device directly.
+6. **Where depth inference runs.** Unchanged and unblocked: the depth texture
+   now has an obvious home in the pass (a second sampler in
+   `Pseudo3DWarp.frag.glsl`), but nothing infers yet. Same GPU as compositing ⇒
+   contention; a separate thread with a bounded queue and a defined drop policy
+   is required, and NNAPI/Hexagon may be preferable to GPU for that reason.
+7. **Subtitle strategy** for the theater path (§3.4). Unchanged: still no
+   subtitle rendering in the theater session. Now merely a feature to add —
+   `blend-subtitles` renders into the frame mpv hands us, which is exactly the
+   frame this pass already receives.
+
+---
+
+## 8. What was built (2026-09-11)
+
+### 8.1 Shape
+
+```
+mpv decode ──► vo=libmpv, driven by mpv_render_context
+                     │  MPV_RENDER_PARAM_OPENGL_FBO -> FBO texture (GL_RGBA8)
+                     ▼
+              our GL pass (Pseudo3DWarp.frag.glsl): sample the frame,
+                     │  warp by synthesized depth, pack SBS
+                     ▼
+              EGL window surface = the Spatial panel's Surface
+```
+
+Files, all new except where noted:
+
+| File | Role |
+|---|---|
+| `android/libmpv/src/main/cpp/render_gl.cpp` | The native host: EGL display/context/`EGLSurface` off the panel `Surface`, FBO + colour texture, shader program, GL thread, `mpv_render_context`. Three JNI entries. |
+| `android/libmpv/src/main/java/.../MpvRenderHost.kt` | Kotlin face of it; owns create/close ordering and the one-host-per-process rule. |
+| `android/libmpv/src/main/cpp/CMakeLists.txt` | *(modified)* compiles `render_gl.cpp`, links `libEGL`, `libGLESv3`, `libandroid`. |
+| `android/libmpv/src/main/cpp/main.cpp` | *(modified)* `destroy_locked` calls `render_gl_shutdown` **before** `mpv_terminate_destroy`. |
+| `android/libmpv/src/main/java/.../MpvPlayer.kt` | *(modified)* `nativeRenderCreate/Destroy/SetStrength`. |
+| `MpvPlayerCore.kt` | *(modified)* `renderApi` constructor flag, `setRenderSurface`, `renderHostTeardown`, `pendingRenderSurface`. |
+| `assets/shaders/theater3d/Pseudo3DWarp.{vert,frag}.glsl` | The pass. GLSL ES 3.0, plain assets, never written to disk for mpv. |
+| `TheaterMpvSession.kt`, `Theater3DBridge.kt`, `Theater3DChannel.kt`, `Theater3DActivity.kt`, `Theater3DPanel.kt`, `StereoModeResolver.kt` | *(modified)* render path, `synthetic`/shader-source payload, live strength slider. |
+| `lib/quest/theater3d_bridge.dart`, `lib/screens/video_player/parts/theater3d.dart`, `lib/services/shader_asset_loader.dart` | *(modified)* ship shader source instead of a materialized path. |
+
+**Deleted**: `Theater3DShaderBake.kt` and its test — the whole
+per-strength-file-name/atomic-rename/re-append mechanism existed only to route
+around mpv's user-shader handling.
+
+### 8.2 The four design decisions that mattered
+
+1. **No `MPV_RENDER_PARAM_ADVANCED_CONTROL`.** Read from the source rather than
+   assumed: without it, `vo_libmpv.c`'s `flip_page()` increments
+   `present_count`, which releases the wait inside
+   `mpv_render_context_render()` — so timing stays mpv's, `report_swap` is
+   genuinely optional (`flip_page`'s `flip_count` loop breaks out while
+   `flip_count` is still 0), and presentation is `eglSwapBuffers`'. Worth
+   knowing: `MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME` **defaults to 1** when the
+   param is absent, so passing `0` explicitly would not have "unblocked"
+   anything. The rendezvous is documented in `render_gl.cpp`'s header.
+2. **Zero-copy hardware decode survives.** `hwdec_aimagereader.c` is compiled
+   into the pinned libmpv (`HAVE_ANDROID_MEDIA_NDK`), it registers as the
+   `aimagereader` interop driver, and it needs only `eglGetCurrentContext()`,
+   `GL_OES_EGL_image_external`, and the `AImageReader` NDK entry points — all
+   satisfied. So the handoff's cost table was too pessimistic on this row, and
+   the Dart side no longer needs its `mediacodec-copy` downgrade.
+3. **One thread per ownership domain, no locks between them.** The JNI thread
+   creates EGL + the render context with the context current on itself (so
+   every `mpv_handle` use happens under `SessionGuard` admission); the GL thread
+   then owns the context and never touches the handle, the JVM or the Surface;
+   the update callback does nothing but set a flag and signal a condvar, since
+   `render.h` forbids `mpv_render_*()` from inside it. Lock order stays
+   `L -> S -> R`.
+4. **Strength is a uniform.** This is what retires the entire Phase-2 bug class
+   (`PARAM` rejection, path-keyed shader cache, atomic-rename staging,
+   re-append-to-recompile) and makes the in-scene slider live rather than
+   release-only.
+
+A fifth, found by re-reading `aspect.c` rather than by any test: **`gl_video`
+letterboxes by default** (`keepaspect=1`, so `mp_get_src_dst_rects` returns a
+`dst` smaller than the render target). For the theater panel that is wrong in
+both directions — a letterboxed stereo pair sits inside black bars and is
+squashed, so the compositor's per-eye split no longer maps each half to one
+eye's view; and in synthetic mode the shader's `srcUv` mapping assumes the frame
+it samples spans the whole panel. mpv has no universal default here, so
+`MpvPlayerCore.setRenderSurface` takes `letterbox` and the theater passes
+`false`. The flat path keeps mpv's default.
+
+### 8.3 Shader correctness — measured, not assumed
+
+`glslangValidator` only proves syntax, so the shipping shader source was run on
+a real GLES 3.2 driver in an EGL context against synthetic inputs, and the
+**depth field and disparity were measured out of the framebuffer**. Three
+things that only measurement was going to find:
+
+- **The eyes' depth fields were inconsistent.** Tapping `HOOKED_pos` — the
+  output coordinate — means the left half reads depth at frame `2x` while the
+  right half reads it at `2x - 1920`: the same scene point gets two different
+  depths, one per eye, and where they disagree the pair reads inverted. Fixed
+  by indexing the depth field with the source coordinate (`srcUv`), which is
+  also the correction the Phase-2 test named "the pseudo-3D shader takes its
+  multi-tap samples in unwrapped coordinates" was *trying* to pin.
+- **Both eyes now move inward for near content** (crossed disparity, the
+  correct sign), verified two ways: with a constant shift, so the
+  self-referential depth field cannot confound the direction; and by reading
+  the depth field itself out of an instrumented build.
+- **The vertical taps' ground prior was a copy-paste slip** (`uv.y + r.y` used
+  for a horizontal tap). Harmless numerically, wrong on inspection; fixed.
+
+The harness is throwaway and lives outside the repo. Its assertions are worth
+reconstructing if the shader changes: passthrough must be byte-identical to the
+input under the identity mapping (which also pins the orientation contract
+between `FLIP_Y` in `render_gl.cpp` and the vertex stage), both eyes must agree
+on depth, and the shift must be inward and linear in strength.
+
+### 8.4 Verification actually run
+
+| Gate | Result |
+|---|---|
+| `glslangValidator` on both stages | pass |
+| Shader behaviour on a real GLES 3.2 driver | pass; passthrough byte-identical, both eyes agree, disparity inward and linear |
+| `flutter analyze` (repo code) | 0 issues |
+| `flutter test` (`test/quest/`, `test/services/` and the full suite) | pass |
+| `:app:compileDebugKotlin`, default and `THEATER_MODE=1` | pass |
+| `:theater3d:testDebugUnitTest` | pass |
+| `:libmpv:externalNativeBuildDebug` | pass; `libplayer.so` exports the three JNI entries and links `libEGL`/`libGLESv3`/`libm`/`libandroid` |
+| `THEATER_MODE=1 flutter build apk --debug` | pass; APK contains both shader assets and `nativeRender*` in `libplayer.so` |
+| Full `flutter test` suite | 7128 pass |
+
+### 8.5 Not verified — the on-device list
+
+Nothing here has run on a Quest. In rough diagnosis order:
+
+1. **Does the panel Surface accept an EGL window surface at all** — and does
+   `WIDTH`/`HEIGHT` report 1920×1080 as the panel was configured? Logged as
+   `MpvRenderGl: egl x.y ready: WxH, GL_RENDERER=...`; a failure here means the
+   Spatial SDK's Surface is not a usable EGL native window and the panel
+   registration type has to be revisited.
+2. **Does `hwdec=mediacodec` reach GL** through `aimagereader`? `hwdec-current`
+   is still logged, and the interop driver's own `MP_VERBOSE` lines would name
+   the attempted driver. Falling back to `mediacodec-copy` is the diagnosis, not
+   a fix.
+3. **Orientation.** The `FLIP_Y` ↔ vertex-stage pair is *verified* consistent
+   against a driver, but the remaining unknown is whether the Spatial
+   compositor's Surface is stored bottom-up like a normal EGL window surface.
+   A vertically flipped picture means flipping the `vUv` mapping in the vertex
+   stage — one line, and the comment there says not to do it without changing
+   `FLIP_Y` too.
+3b. **Aspect.** `keepaspect` is now set from `setRenderSurface`'s `letterbox`
+   (theater: `false`). If `sbs` mode looks squashed or has black bars, that flag
+   is where to look — and note it is read at option-setting time, i.e. inside
+   `initialize()`, so it cannot be changed after a session starts.
+4. **Thermals and cadence.** `gl_video`'s per-frame cost at 1920×1080 is now
+   the app's, plus our one pass.
+5. **HDR.** See §7.4: the FBO is 8-bit, so HDR is being tone-mapped and
+   truncated. Correct-looking, not preserved.

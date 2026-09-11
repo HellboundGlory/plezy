@@ -8,15 +8,15 @@ import com.meta.spatial.runtime.StereoMode
  * per-eye compositing mode ([MediaPanelRenderOptions.stereoMode] --
  * PLAN_3D.md 1.5).
  *
- * Real per-eye stereo comes entirely from this mapping: mpv decodes the
- * source's already-combined SBS/OU frame untouched into the panel's
- * Surface, and the *compositor* -- not mpv -- samples a different half per
- * eye according to the resolved [StereoMode]. `synthetic` (the heuristic
- * 2D->3D path) is no exception: its user shader packs synthesized depth as
- * an SBS pair, so it resolves to [StereoMode.LeftRight] exactly like `sbs`.
- * The difference between the two is entirely whether that shader ran --
- * [Theater3DBridge.TheaterOpenRequest.shaderPath] is set for `synthetic`
- * and null for `sbs`, and this mapping cannot and does not see it.
+ * Real per-eye stereo comes entirely from this mapping: the app's render-API
+ * pass puts the frame on the panel's Surface, and the *compositor* -- not mpv --
+ * samples a different half per eye according to the resolved [StereoMode].
+ * `synthetic` (the heuristic 2D->3D path) is no exception: its shader packs
+ * synthesized depth as an SBS pair, so it resolves to [StereoMode.LeftRight]
+ * exactly like `sbs`. The difference between the two is entirely what that
+ * shader did with the frame -- [Theater3DBridge.TheaterOpenRequest.synthetic]
+ * is true for `synthetic` and false for `sbs`, and this mapping cannot and does
+ * not see it.
  *
  * Pure and device-free by design, per PLAN_3D.md's testing plan, so this
  * module's own JVM unit tests (StereoModeResolverTest) exercise it without

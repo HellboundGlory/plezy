@@ -130,17 +130,20 @@ class Theater3DBridge {
   /// Launches `Theater3DActivity` with everything needed to resume the
   /// exact session the flat-panel player is showing: [uri]/[headers]
   /// identical to what was passed to its own `open`, [position] its current
-  /// playback position, and the selected [stereoMode]. [shaderPath] is the
-  /// heuristic pseudo-3D shader to run inside the theater session's own mpv
-  /// instance, materialized at the selected strength by
-  /// `ShaderAssetLoader.materializePseudo3DShader` -- it is only meaningful
-  /// for [TheaterStereoMode.synthetic], and null for real SBS/OU passthrough
-  /// content, which already has parallax and must not be re-processed.
+  /// playback position, and the selected [stereoMode].
   ///
-  /// Strength travels as a path, not a number, because mpv can only
-  /// override a user shader's `//!PARAM` on `vo=gpu-next`; the theater
-  /// session's GL backend is chosen per file, so the value is baked into the
-  /// shader source instead. See that method's doc comment.
+  /// [vertexShader] and [fragmentShader] are the GLSL ES 3.0 sources the
+  /// native render-API host compiles and runs on mpv's output
+  /// (`assets/shaders/theater3d/`, see `ShaderAssetLoader
+  /// .loadTheater3DWarpShaders`). They are required for every mode: even real
+  /// SBS/OU passthrough needs a program to put mpv's frame on the panel.
+  /// [synthetic] says which job that program does -- `true` invents a depth
+  /// field and packs a side-by-side pair, `false` copies the frame through
+  /// untouched, which is what content that already carries parallax needs.
+  ///
+  /// [strength] rides alongside as a number because it is a shader uniform in
+  /// the app's own pass, not a constant baked into a file: the in-scene slider
+  /// changes the picture on the next frame, and nothing is recompiled.
   ///
   /// Only one theater session is allowed at a time; calling this while one
   /// is already active rejects with a [PlatformException]
@@ -151,14 +154,12 @@ class Theater3DBridge {
   /// rather than let it propagate as an unhandled platform error.
   ///
   /// [hwdec] is the mpv `hwdec` value the native session applies before its
-  /// load. It is required rather than defaulted because the correct value
-  /// depends on whether a shader is in the chain (see `theater3d.dart`), and
-  /// a wrong-but-plausible default here silently means CPU decoding.
+  /// load. It is required rather than defaulted because a wrong-but-plausible
+  /// default here silently means CPU decoding.
   ///
-  /// [strength] is the depth strength [shaderPath] was materialized at. It
-  /// travels alongside the path so the in-scene controls can show the current
-  /// setting and re-bake on change without parsing the value back out of the
-  /// shader source.
+  /// [strength] is the depth strength the in-scene control starts at, 0.0-1.0.
+  /// It travels as a number so the controls can show the current setting and
+  /// change it live, without the value being encoded anywhere else.
   Future<void> open({
     required String uri,
     Map<String, String> headers = const {},
@@ -166,7 +167,9 @@ class Theater3DBridge {
     int? audioTrackId,
     int? subtitleTrackId,
     required TheaterStereoMode stereoMode,
-    String? shaderPath,
+    required String vertexShader,
+    required String fragmentShader,
+    required bool synthetic,
     double strength = 0.5,
     required String hwdec,
   }) {
@@ -177,7 +180,9 @@ class Theater3DBridge {
       'audioTrackId': audioTrackId,
       'subtitleTrackId': subtitleTrackId,
       'stereoMode': stereoMode.wireValue,
-      'shaderPath': shaderPath,
+      'vertexShader': vertexShader,
+      'fragmentShader': fragmentShader,
+      'synthetic': synthetic,
       'strength': strength,
       'hwdec': hwdec,
     });

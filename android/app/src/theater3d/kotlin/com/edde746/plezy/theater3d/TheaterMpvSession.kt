@@ -3,16 +3,26 @@ package com.edde746.plezy.theater3d
 import android.app.Activity
 import android.util.Log
 import android.view.Surface
+import com.edde746.plezy.libmpv.MpvRenderHost
 import com.edde746.plezy.mpv.MpvPlayerCore
 import com.edde746.plezy.shared.PlayerDelegate
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Drives a second, headless [MpvPlayerCore] against the raw compositor
- * [Surface] a [Theater3DPanel] hands back — see [MpvPlayerCore]'s
- * `headless` constructor parameter. The flat-panel core in `MainActivity`
- * stays paused (not torn down) for the duration; see PLAN_3D.md 1.3/1.4.
+ * Drives a second, headless [MpvPlayerCore] rendering **through mpv's render
+ * API** into the raw compositor [Surface] a [Theater3DPanel] hands back — see
+ * [MpvPlayerCore.setRenderSurface]. mpv draws the decoded frame into an FBO
+ * this app owns, the app's own shader warps and packs it, and the result is
+ * presented to the panel's Surface by the app's EGL surface
+ * (`android/libmpv/src/main/cpp/render_gl.cpp`). The flat-panel core in
+ * `MainActivity` stays paused (not torn down) for the duration; see
+ * PLAN_3D.md 1.3/1.4.
+ *
+ * That indirection is what the depth strength needs: strength is a shader
+ * *uniform* here, so the in-scene slider takes effect on the next frame with no
+ * shader rewrite and no recompile — and no exposure to mpv's path-keyed user
+ * shader cache, which is what the previous `glsl-shaders` implementation
+ * fought. See HANDOFF_RENDER_API.md.
  *
  * One instance per [Theater3DBridge.TheaterOpenRequest.launch] — owned by
  * [Theater3DChannel], which is also the only caller of [release].
@@ -38,7 +48,9 @@ class TheaterMpvSession(
   }
 
   private var core: MpvPlayerCore? = null
-  private var attachedSurface: Surface? = null
+
+  /** The app-owned GL host presenting into the panel; see [onStrengthChanged]. */
+  private var renderHost: MpvRenderHost? = null
 
   @Volatile private var lastKnownPositionMs: Long = request.positionMs
   @Volatile private var durationMs: Long = 0L
@@ -55,17 +67,30 @@ class TheaterMpvSession(
       Log.w(TAG, "onSurfaceReady called twice; ignoring")
       return
     }
-    // vo=mediacodec's autoconvert hwupload step fails against this
-    // compositor-owned Surface regardless of panel registration type
-    // ("Failed to create HW uploader for format yuv420p" / "Could not
-    // initialize video chain", confirmed on-device with both
-    // VideoSurfacePanelRegistration and ReadableVideoSurfacePanelRegistration).
-    // hardwareDecoding=false selects vo=gpu,gpu-next from the start instead
-    // of after a failed mediacodec attempt.
-    val playerCore = MpvPlayerCore(context = activity, headless = true, hardwareDecoding = false)
+    // The panel Surface is not handed to a `vo`: it becomes the window surface
+    // of this app's own EGL context, and mpv renders into an FBO we own
+    // (renderApi = true -> `vo=libmpv`, no `wid`, no OSD plane). That is also
+    // why `hardwareDecoding` no longer decides the vo chain here — the flag
+    // only feeds `initialVideoOutput`, which the render API replaces. Decoding
+    // still hardware-decodes; `hwdec` below selects it, and mpv reaches GL
+    // through its aimagereader interop.
+    val playerCore = MpvPlayerCore(context = activity, headless = true, hardwareDecoding = true, renderApi = true)
     playerCore.delegate = this
     core = playerCore
-    attachedSurface = surface
+    // Must precede initialize(): the host is created inside it, between
+    // mpv_initialize and the first possible load. See setRenderSurface.
+    //
+    // letterbox=false: the panel's whole output is a packed stereo pair the
+    // compositor splits per eye, and a letterboxed frame would put the pair
+    // inside black bars and squash both eyes. Stretching to fill is also what
+    // the previous vo=mediacodec path did (VideoRectPolicy implements none of
+    // mpv's src/dst rect math), so this preserves the panel's geometry.
+    playerCore.setRenderSurface(
+      surface,
+      request.vertexShader,
+      request.fragmentShader,
+      letterbox = false
+    )
 
     playerCore.initialize { success ->
       if (ended.get()) return@initialize
@@ -73,7 +98,13 @@ class TheaterMpvSession(
         failAndRelease("mpv init failed")
         return@initialize
       }
-      playerCore.attachHeadlessSurface(surface, width, height)
+      renderHost = playerCore.renderHost
+      if (renderHost == null) {
+        failAndRelease("render host unavailable after init")
+        return@initialize
+      }
+      // The in-scene slider's value may already have moved while init ran.
+      renderHost?.setStrength(strength, synthetic = request.synthetic)
       playerCore.observeProperty("time-pos", "double")
       playerCore.observeProperty("duration", "double")
       playerCore.observeProperty("pause", "flag")
@@ -81,6 +112,7 @@ class TheaterMpvSession(
       // value (fallback order, per-file decode routing). First thing to check
       // if playback is ever slow or out of sync again.
       playerCore.observeProperty("hwdec-current", "string")
+      Log.i(TAG, "Render pipeline ready: ${width}x$height, synthetic=${request.synthetic}, strength=$strength")
       openRequestedMedia(playerCore)
     }
   }
@@ -95,22 +127,10 @@ class TheaterMpvSession(
       playerCore.command(arrayOf("change-list", "http-header-fields", "append", "$key: $value"))
     }
 
-    // Stale live shaders from earlier sessions, before anything of ours is
-    // loaded in this fresh mpv instance -- deleting a file mpv has not read yet
-    // would turn the append below into a silent no-hook failure.
-    if (request.shaderPath != null) pruneLiveShaders()
-
-    // The heuristic pseudo-3D shader, when this mode synthesizes depth at all
-    // (null for real SBS/OU passthrough -- see
-    // [Theater3DBridge.TheaterOpenRequest.shaderPath]). Appended before
-    // `loadfile` so the list is already populated when the GL vo initializes
-    // on the first frame: vo=gpu compiles the whole user-shader chain during
-    // that init, and a fresh session's list starts empty, so there is
-    // nothing to clear first.
-    request.shaderPath?.let { shaderPath ->
-      Log.i(TAG, "Appending pseudo-3D shader: $shaderPath")
-      playerCore.command(arrayOf("change-list", "glsl-shaders", "append", shaderPath))
-    }
+    // No shader chain to install. The warp/pack shader is this app's own GL
+    // program now (compiled in the render host), not an mpv user shader, so
+    // there is nothing to append to `glsl-shaders`, nothing to prune, and no
+    // mpv shader cache to defeat.
 
     // Decoder backend, before the load. Without this the session decodes in
     // software: the flat player writes `hwdec` from Dart, and this second,
@@ -120,6 +140,12 @@ class TheaterMpvSession(
     // audio -- and, earlier, of the fork vo=mediacodec failing here with
     // "Failed to create HW uploader for format yuv420p", because it was being
     // handed CPU frames to composite.
+    //
+    // Under the render API `mediacodec` keeps its zero-copy path: mpv maps the
+    // decoder's buffers through its `aimagereader` interop (AImageReader +
+    // GL_OES_EGL_image_external, both compiled into the pinned libmpv) instead
+    // of the app forcing `mediacodec-copy` to get ordinary textures for a user
+    // shader. `hwdec-current` below reports what mpv settled on.
     playerCore.setProperty("hwdec", request.hwdec)
     Log.i(TAG, "hwdec=${request.hwdec}")
 
@@ -182,86 +208,21 @@ class TheaterMpvSession(
   }
 
   /**
-   * Re-bakes the depth strength and swaps the shader chain over.
+   * Applies the in-scene depth slider: a single shader uniform, read once per
+   * frame by the render thread, so it lands on the next presented frame.
    *
-   * Strength lives in the shader's own source (a plain GLSL constant -- mpv's
-   * parameter metadata is unavailable on the vo=gpu backend this session
-   * prefers), so changing it means rewriting that literal and forcing mpv to
-   * recompile. Two things make that work, both learned the hard way on-device:
-   *
-   *  1. **Every strength gets its own file name.** mpv caches user shaders by
-   *     path forever (`load_cached_file`: it returns the body it first read for
-   *     an already-seen path and never re-reads it), so rewriting one fixed
-   *     path and re-appending it re-parsed the *original* source -- the change
-   *     silently did nothing. A distinct path per value guarantees a fresh
-   *     read.
-   *  2. **The write is atomic** (temp file then rename). A plain truncate-and-
-   *     write can be caught mid-flight by mpv's reader, and a truncated shader
-   *     fails to parse -- `parse_user_shader` abandons the whole file, no hook
-   *     registers, and the compositor raw-splits a flat frame, i.e. the
-   *     "overlapped" symptom. Worse, that damaged body then gets cached against
-   *     the path. Rename is atomic on the same filesystem, so no reader can
-   *     ever observe a partial file.
-   *
-   * Stale siblings are pruned at session start ([pruneLiveShaders]) rather than
-   * here, because deleting a file mpv has not read yet would fail the append.
+   * What this replaces, and why it is worth spelling out: strength used to be a
+   * `const float` in an mpv user shader, so every change meant rewriting that
+   * literal to a fresh file name (mpv caches user shaders by path forever) with
+   * an atomic rename (a truncate-and-write can be caught mid-flight, and a
+   * truncated shader makes `parse_user_shader` abandon the whole file), then a
+   * `change-list glsl-shaders clr` + `append` to force a recompile. All of
+   * that existed to route around mpv's shader handling, and none of it exists
+   * under the render API.
    */
   override fun onStrengthChanged(strength: Double) {
-    val playerCore = core ?: return
-    val templatePath = request.shaderPath ?: return
     this.strength = strength
-
-    val template = File(templatePath)
-    val source = try {
-      template.readText()
-    } catch (e: Exception) {
-      Log.w(TAG, "Failed to read shader for strength=$strength", e)
-      return
-    }
-    val value = Theater3DShaderBake.format(strength)
-    val rewritten = Theater3DShaderBake.rewriteStrength(source, strength)
-    if (rewritten == null) {
-      Log.w(TAG, "Shader has no STRENGTH literal to rewrite; ignoring strength change")
-      return
-    }
-
-    val live = File(template.parentFile, Theater3DShaderBake.liveShaderName(value))
-    val staged = File(template.parentFile, Theater3DShaderBake.liveShaderStagingName(value))
-    val baked = try {
-      staged.writeText(rewritten)
-      // Atomic swap: a reader either sees the old file or the complete new one.
-      if (!staged.renameTo(live)) {
-        staged.delete()
-        Log.w(TAG, "Could not publish live shader for strength=$strength")
-        return
-      }
-      live
-    } catch (e: Exception) {
-      staged.delete()
-      Log.w(TAG, "Failed to write live shader for strength=$strength", e)
-      return
-    }
-
-    Log.i(TAG, "Strength -> $strength (${baked.name})")
-    // The clear-then-append pair is what triggers the recompile; re-appending
-    // an already-listed path alone would be skipped as a no-op.
-    playerCore.command(arrayOf("change-list", "glsl-shaders", "clr", ""))
-    playerCore.command(arrayOf("change-list", "glsl-shaders", "append", baked.absolutePath))
-  }
-
-  /**
-   * Removes live shaders from previous sessions. Called once per session,
-   * before any of ours is loaded, so nothing mpv is using can disappear.
-   */
-  private fun pruneLiveShaders() {
-    val templatePath = request.shaderPath ?: return
-    try {
-      val dir = File(templatePath).parentFile ?: return
-      dir.listFiles { f -> Theater3DShaderBake.isLiveShaderFile(f.name) }
-        ?.forEach { if (!it.delete()) Log.d(TAG, "Could not prune ${it.name}") }
-    } catch (e: Exception) {
-      Log.d(TAG, "Live shader prune skipped", e)
-    }
+    renderHost?.setStrength(strength, synthetic = request.synthetic)
   }
 
   override fun transportSnapshot(): Theater3DBridge.TransportSnapshot =
@@ -315,9 +276,11 @@ class TheaterMpvSession(
   private fun release() {
     val playerCore = core ?: return
     core = null
-    val surface = attachedSurface
-    attachedSurface = null
-    if (surface != null) playerCore.detachHeadlessSurface(surface)
+    // dispose() tears the render host down immediately before it closes the
+    // mpv session, which is the order an mpv_render_context requires (see
+    // MpvPlayerCore.renderHostTeardown). The panel Surface needs no handoff
+    // here: closing the host destroys the EGL surface that was using it.
+    renderHost = null
     playerCore.dispose()
   }
 
