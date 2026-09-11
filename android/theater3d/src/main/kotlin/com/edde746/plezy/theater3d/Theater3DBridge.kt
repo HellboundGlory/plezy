@@ -52,6 +52,11 @@ object Theater3DBridge {
    * owns the extraction directory), and the native side only ever consumes a
    * file path.
    *
+   * [strength] is the numeric value that bake used (0.0-1.0). It rides
+   * alongside the path purely so the in-scene controls can show the current
+   * setting and re-bake on change without parsing it back out of the shader
+   * file; the path alone would be enough to play.
+   *
    * [hwdec] is the mpv `hwdec` value to apply before the load, e.g.
    * `"mediacodec,mediacodec-copy"` or `"no"`. It has to be carried
    * explicitly: the flat player writes this property from Dart
@@ -67,7 +72,21 @@ object Theater3DBridge {
     val subtitleTrackId: Int?,
     val stereoMode: String,
     val shaderPath: String?,
+    val strength: Double,
     val hwdec: String
+  )
+
+  /**
+   * One reading of the session's playback state, for the controls panel's
+   * progress UI. Polled by [Theater3DActivity] on a UI-rate timer rather than
+   * pushed, because the controls are plain Android views that need a value at
+   * the moment they redraw, and a poll cannot leave a stale label behind if a
+   * push is missed during a lifecycle transition.
+   */
+  data class TransportSnapshot(
+    val positionMs: Long,
+    val durationMs: Long,
+    val paused: Boolean
   )
 
   interface Listener {
@@ -101,6 +120,22 @@ object Theater3DBridge {
 
     /** The in-scene play/pause affordance was pressed. */
     fun onPlayPauseToggled(paused: Boolean)
+
+    /** Absolute seek request from the in-scene transport controls. */
+    fun onSeekRequested(positionMs: Long)
+
+    /**
+     * Live depth-strength change from the in-scene control, 0.0-1.0.
+     *
+     * This is a *display* change the session can make on its own: strength is
+     * baked into the user shader's source, so the session rewrites that one
+     * constant and recompiles the chain. Persisting it is the caller's job,
+     * which is why the exit payload carries the final value back to Dart.
+     */
+    fun onStrengthChanged(strength: Double)
+
+    /** Current playback state for the controls panel; see [TransportSnapshot]. */
+    fun transportSnapshot(): TransportSnapshot
   }
 
   @Volatile private var pendingRequest: TheaterOpenRequest? = null

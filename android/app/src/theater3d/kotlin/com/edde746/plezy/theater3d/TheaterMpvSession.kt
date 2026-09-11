@@ -5,6 +5,8 @@ import android.util.Log
 import android.view.Surface
 import com.edde746.plezy.mpv.MpvPlayerCore
 import com.edde746.plezy.shared.PlayerDelegate
+import java.io.File
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -30,7 +32,7 @@ class TheaterMpvSession(
 ) : Theater3DBridge.Listener, PlayerDelegate {
   interface Callback {
     /** The session ended (in-scene exit, swipe-dismiss, or error) at [positionMs]. */
-    fun onExit(positionMs: Long)
+    fun onExit(positionMs: Long, strength: Double)
 
     /** Session setup failed before or during playback; already released. */
     fun onError(reason: String)
@@ -40,6 +42,13 @@ class TheaterMpvSession(
   private var attachedSurface: Surface? = null
 
   @Volatile private var lastKnownPositionMs: Long = request.positionMs
+  @Volatile private var durationMs: Long = 0L
+  @Volatile private var paused: Boolean = false
+
+  /** Current depth strength; changes as the in-scene control moves, and is
+   * reported back on exit so the caller can persist it. */
+  @Volatile private var strength: Double = request.strength
+
   private val ended = AtomicBoolean(false)
 
   override fun onSurfaceReady(surface: Surface, width: Int, height: Int) {
@@ -67,6 +76,8 @@ class TheaterMpvSession(
       }
       playerCore.attachHeadlessSurface(surface, width, height)
       playerCore.observeProperty("time-pos", "double")
+      playerCore.observeProperty("duration", "double")
+      playerCore.observeProperty("pause", "flag")
       // What mpv actually settled on, which can differ from the requested
       // value (fallback order, per-file decode routing). First thing to check
       // if playback is ever slow or out of sync again.
@@ -149,8 +160,70 @@ class TheaterMpvSession(
   }
 
   override fun onPlayPauseToggled(paused: Boolean) {
+    this.paused = paused
     core?.setProperty("pause", if (paused) "yes" else "no")
   }
+
+  /**
+   * Absolute seek, in seconds with mpv's `absolute` flag so it is not
+   * interpreted as relative to the current position.
+   */
+  override fun onSeekRequested(positionMs: Long) {
+    val seconds = (positionMs.coerceAtLeast(0L) / 1000.0)
+    core?.command(arrayOf("seek", seconds.toString(), "absolute"))
+    // Optimistic, so the progress bar jumps to where the user dropped it
+    // instead of snapping back to the pre-seek position until the next
+    // `time-pos` observation arrives.
+    lastKnownPositionMs = positionMs.coerceAtLeast(0L)
+  }
+
+  /**
+   * Re-bakes the depth strength and swaps the shader chain over.
+   *
+   * Strength lives in the shader's own source (a plain GLSL constant -- mpv's
+   * parameter metadata is unavailable on the vo=gpu backend this session
+   * prefers), so changing it means rewriting that one literal and getting mpv
+   * to recompile. A sibling file is written rather than editing the one Dart
+   * materialized: that one is Dart's cache and is verified by byte comparison
+   * on the next launch, so clobbering it would only force a rewrite.
+   *
+   * The clear-then-append pair is what actually triggers the recompile --
+   * re-appending the same path would be a no-op.
+   */
+  override fun onStrengthChanged(strength: Double) {
+    val playerCore = core ?: return
+    val templatePath = request.shaderPath ?: return
+    this.strength = strength
+
+    val template = File(templatePath)
+    val source = try {
+      template.readText()
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to read shader for strength=$strength", e)
+      return
+    }
+    val match = STRENGTH_PATTERN.find(source)
+    if (match == null) {
+      Log.w(TAG, "Shader has no STRENGTH literal to rewrite; ignoring strength change")
+      return
+    }
+    val value = String.format(Locale.US, "%.2f", strength)
+    val rewritten = source.replaceRange(match.range, match.groupValues[1] + value + match.groupValues[3])
+
+    val baked = try {
+      File(template.parentFile, LIVE_SHADER_NAME).apply { writeText(rewritten) }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to write live shader for strength=$strength", e)
+      return
+    }
+
+    Log.i(TAG, "Strength -> $strength (${baked.absolutePath})")
+    playerCore.command(arrayOf("change-list", "glsl-shaders", "clr", ""))
+    playerCore.command(arrayOf("change-list", "glsl-shaders", "append", baked.absolutePath))
+  }
+
+  override fun transportSnapshot(): Theater3DBridge.TransportSnapshot =
+    Theater3DBridge.TransportSnapshot(lastKnownPositionMs, durationMs, paused)
 
   override fun onPropertyChange(name: String, value: Any?) {
     when (name) {
@@ -158,6 +231,11 @@ class TheaterMpvSession(
         val seconds = value as? Double ?: return
         lastKnownPositionMs = (seconds * 1000.0).toLong()
       }
+      "duration" -> {
+        val seconds = value as? Double ?: return
+        durationMs = (seconds * 1000.0).toLong()
+      }
+      "pause" -> paused = value == true
       "hwdec-current" -> Log.i(TAG, "hwdec-current=${value ?: "none"}")
     }
   }
@@ -180,8 +258,9 @@ class TheaterMpvSession(
   private fun handleExit() {
     if (!ended.compareAndSet(false, true)) return
     val positionMs = lastKnownPositionMs
+    val finalStrength = strength
     release()
-    callback.onExit(positionMs)
+    callback.onExit(positionMs, finalStrength)
   }
 
   private fun failAndRelease(reason: String) {
@@ -202,5 +281,19 @@ class TheaterMpvSession(
 
   companion object {
     private const val TAG = "TheaterMpvSession"
+
+    /** Sibling of the materialized shader that live strength changes rewrite. */
+    private const val LIVE_SHADER_NAME = "Pseudo3DSbs_live.glsl"
+
+    /**
+     * Must match the literal `ShaderAssetLoader.materializePseudo3DShader`
+     * substitutes on the Dart side -- `assets/shaders/pseudo3d/Pseudo3DSbs.glsl`
+     * declares `const float STRENGTH = <value>;` for exactly this reason. Two
+     * implementations exist only because the live control cannot round-trip
+     * through Flutter; `shader_asset_loader_test.dart` pins the asset's shape
+     * and `TheaterMpvSessionTest` pins this pattern against it.
+     */
+    private val STRENGTH_PATTERN =
+      Regex("""(const\s+float\s+STRENGTH\s*=\s*)([0-9]*\.?[0-9]+)(\s*;)""")
   }
 }

@@ -80,6 +80,7 @@ class Theater3DChannel(
         subtitleTrackId = (args["subtitleTrackId"] as? Number)?.toInt(),
         stereoMode = args["stereoMode"] as? String ?: "off",
         shaderPath = args["shaderPath"] as? String,
+        strength = (args["strength"] as? Number)?.toDouble() ?: 0.5,
         // Absent means "leave mpv's default", which is software. Callers on
         // this path always send it; the fallback only keeps the contract
         // total rather than inventing a backend.
@@ -94,9 +95,12 @@ class Theater3DChannel(
 
   private val sessionCallback =
     object : TheaterMpvSession.Callback {
-      override fun onExit(positionMs: Long) {
+      override fun onExit(positionMs: Long, strength: Double) {
         activeSession = null
-        sendEvent(mapOf("event" to "onExit", "positionMs" to positionMs))
+        // `strength` rides the exit payload so the caller can persist whatever
+        // the in-scene control was left at; the session itself owns no
+        // preferences.
+        sendEvent(mapOf("event" to "onExit", "positionMs" to positionMs, "strength" to strength))
       }
 
       override fun onError(reason: String) {

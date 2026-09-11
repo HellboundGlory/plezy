@@ -58,6 +58,7 @@ void main() {
       subtitleTrackId: 3,
       stereoMode: TheaterStereoMode.synthetic,
       shaderPath: '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      strength: 0.75,
       hwdec: 'mediacodec-copy',
     );
 
@@ -70,6 +71,7 @@ void main() {
       'subtitleTrackId': 3,
       'stereoMode': 'synthetic',
       'shaderPath': '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      'strength': 0.75,
       'hwdec': 'mediacodec-copy',
     });
   });
@@ -92,6 +94,7 @@ void main() {
       'subtitleTrackId': null,
       'stereoMode': 'off',
       'shaderPath': null,
+      'strength': 0.5,
       'hwdec': 'no',
     });
   });
@@ -121,7 +124,7 @@ void main() {
     );
   });
 
-  test('onExit demuxes only onExit-tagged events, decoding positionMs', () async {
+  test('onExit demuxes only onExit-tagged events, decoding position and strength', () async {
     final bridge = Theater3DBridge();
     final events = <TheaterExitEvent>[];
     final subscription = bridge.onExit.listen(events.add);
@@ -131,8 +134,14 @@ void main() {
     await sendEvent(const {'event': 'onError', 'reason': 'panel registration failed'});
     expect(events, isEmpty);
 
-    await sendEvent(const {'event': 'onExit', 'positionMs': 12345});
-    expect(events, [const TheaterExitEvent(12345)]);
+    // Strength is what the in-scene depth control was left at, so the caller
+    // can persist it -- it must survive the wire, not silently default.
+    await sendEvent(const {'event': 'onExit', 'positionMs': 12345, 'strength': 0.85});
+    expect(events, [const TheaterExitEvent(12345, 0.85)]);
+
+    // A session that never touched the control reports the neutral default.
+    await sendEvent(const {'event': 'onExit', 'positionMs': 1, 'strength': 0.5});
+    expect(events.last, const TheaterExitEvent(1, 0.5));
   });
 
   test('onError demuxes only onError-tagged events, decoding reason', () async {
@@ -141,7 +150,7 @@ void main() {
     final subscription = bridge.onError.listen(events.add);
     addTearDown(subscription.cancel);
 
-    await sendEvent(const {'event': 'onExit', 'positionMs': 1});
+    await sendEvent(const {'event': 'onExit', 'positionMs': 1, 'strength': 0.5});
     expect(events, isEmpty);
 
     await sendEvent(const {'event': 'onError', 'reason': 'mpv init failed'});
@@ -157,10 +166,10 @@ void main() {
     addTearDown(exitSub.cancel);
     addTearDown(errorSub.cancel);
 
-    await sendEvent(const {'event': 'onExit', 'positionMs': 500});
+    await sendEvent(const {'event': 'onExit', 'positionMs': 500, 'strength': 0.5});
     await sendEvent(const {'event': 'onError', 'reason': 'load failed'});
 
-    expect(exits, [const TheaterExitEvent(500)]);
+    expect(exits, [const TheaterExitEvent(500, 0.5)]);
     expect(errors, [const TheaterErrorEvent('load failed')]);
   });
 }

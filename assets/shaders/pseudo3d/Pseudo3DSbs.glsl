@@ -2,22 +2,19 @@
 //!BIND HOOKED
 //!DESC Pseudo-3D SBS: heuristic depth + horizontal parallax
 
-// Depth strength, 0.0-1.0. This is a plain GLSL constant rather than an mpv
-// shader parameter on purpose -- and it is the one thing about this file that
-// must not change.
+// Depth strength, 0.0-1.0. Plain GLSL constants rather than mpv shader
+// parameters on purpose. STRENGTH is the one the loader substitutes (see
+// ShaderAssetLoader.materializePseudo3DShader and the theater session's live
+// strength control), so it must stay a bare numeric literal on its own line
+// in exactly this form; the others are fixed tuning.
 //
 // mpv's PARAM parameter metadata is a libplacebo (vo=gpu-next) feature.
 // Classic vo=gpu's user-shader parser has no case for it: it reports
-// "Unrecognized command 'PARAM strength'", parse_hook() returns false, and
+// "Unrecognized command 'PARAM ...'", parse_hook() returns false, and
 // parse_user_shader() abandons the *entire file* -- so a vo=gpu session
 // registers no hook and silently renders the untouched frame. The theater
-// path cannot rely on which backend it lands on (MpvPlayerCore's
-// initialVideoOutput picks per file, gpu first), so this file has to parse
-// on both.
-//
-// Strength is therefore baked into a per-strength copy of this file by
-// ShaderAssetLoader.materializePseudo3DShader, which substitutes the literal
-// below. Nothing else in the file is rewritten.
+// path cannot rely on which backend it lands on (MpvPlayerCore picks the vo
+// per file, gpu first), so this file has to parse on both.
 //
 // NOTE for future edits: the two-character header marker must never appear
 // anywhere below the metadata block, not even inside a comment. mpv locates
@@ -26,6 +23,13 @@
 // mention in a comment truncates the body before hook() and the shader stops
 // compiling. Refer to "mpv's PARAM metadata" in prose instead.
 const float STRENGTH = 0.5;
+const float DETAIL_GAIN = 3.0;
+const float DETAIL_MIX = 0.6;
+const float BLUR_RADIUS = 0.02;
+
+float lumaOf(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
 
 vec4 hook() {
     vec2 uv = HOOKED_pos;
@@ -42,35 +46,47 @@ vec4 hook() {
     bool isLeftHalf = uv.x < 0.5;
     vec2 srcUv = vec2(fract(uv.x * 2.0), uv.y);
 
-    // Depth proxy: a smooth vertical ramp. In most footage the bottom of
-    // frame is the ground plane, so it reads "near", and the top "far".
-    // HOOKED_pos.y is 0 at the image's top and 1 at its bottom in both
-    // storage orientations -- mpv's get_transform() folds each plane's
-    // bottom-up/stride<0 storage into a flip, so that holds regardless of
-    // how the frame was uploaded.
-    //
-    // This deliberately carries NO image-derived term. The plan originally
-    // blended in a local-contrast term (fwidth of the sampled colour) to
-    // read soft regions as "far", and it is exactly what produced the
-    // visible artifacts this shipped with: fwidth IS an edge detector, so it
-    // is peaked and noisy precisely along object silhouettes, and mixing it
-    // into depth puts a depth discontinuity there. Each eye then samples a
-    // different distance across that boundary, so edges render as a doubled
-    // outline / halo instead of a clean edge -- and the effect tracks the
-    // video content, shimmering frame to frame. Two further reasons it is
-    // not salvageable by tuning its weight down: fwidth of a *resampled*
-    // texture measures the image's gradient rather than anything about
-    // depth or geometry (so "soft == far" is as likely to be backwards),
-    // and its magnitude depends on the derivative quad, i.e. on resolution.
-    // Structure-aware depth is Phase 3's ML tier, not something a cheap
-    // single-pass expression can fake. Smooth and stable beats detailed and
-    // broken.
-    float depth = clamp(1.0 - srcUv.y, 0.0, 1.0);
+    // Wide, smooth local mean of the frame. Every tap is taken in the
+    // CONTINUOUS coordinate (uv), never srcUv: srcUv.x wraps through fract(),
+    // so a derivative or a multi-tap window straddling the wrap at
+    // uv.x == 0.5 would mix the two eye images and leave a seam there.
+    vec2 r = vec2(BLUR_RADIUS, BLUR_RADIUS * HOOKED_size.x / HOOKED_size.y);
+    vec3 centre = HOOKED_tex(uv).rgb;
+    vec3 mean3 = centre
+               + HOOKED_tex(uv + vec2( r.x, 0.0)).rgb
+               + HOOKED_tex(uv + vec2(-r.x, 0.0)).rgb
+               + HOOKED_tex(uv + vec2(0.0,  r.y)).rgb
+               + HOOKED_tex(uv + vec2(0.0, -r.y)).rgb;
+    mean3 *= 0.2;
+
+    // Structure cue: how much local detail a region carries (textured and/or
+    // high-contrast reads "near", flat haze/sky/walls read "far"). This is a
+    // high-pass magnitude taken against the *blurred* field above, NOT a
+    // per-pixel derivative. That distinction is the whole point: an earlier
+    // revision used fwidth() of the sampled colour here, which peaks precisely
+    // along object silhouettes, so depth jumped at every edge and each eye
+    // sampled a different distance across it -- a doubled outline/halo that
+    // shimmered with the video. A wide blur is continuous by construction, so
+    // the depth field it produces is smooth: no edge response, no halos.
+    float detail = clamp(abs(lumaOf(centre) - lumaOf(mean3)) * DETAIL_GAIN, 0.0, 1.0);
+
+    // Ground-plane prior: in most footage the bottom of frame is nearer than
+    // the top. HOOKED_pos.y is 0 at the image's top and 1 at its bottom in
+    // both storage orientations -- mpv's get_transform() folds each plane's
+    // bottom-up/stride<0 storage into a flip, so that holds however the frame
+    // was uploaded.
+    float farness = 1.0 - srcUv.y;
+
+    // Blended rather than either alone: a pure ramp has no structure to
+    // perceive as depth (it reads as a flat, slightly tilted plane), and a
+    // pure detail field has no global layout. Together they give structure
+    // that stays stable frame to frame.
+    float depth = clamp(mix(farness, 1.0 - detail, DETAIL_MIX), 0.0, 1.0);
 
     // Disparity is strictly horizontal and opposite per eye, and 0.5 is the
     // convergence plane: below it the eye samples are crossed (perceived
-    // nearer, in front of the panel), above it uncrossed (perceived
-    // farther, behind it).
+    // nearer, in front of the panel), above it uncrossed (perceived farther,
+    // behind it).
     float shift = (depth - 0.5) * STRENGTH * 0.02; // fraction of the frame
     vec2 offset = vec2(isLeftHalf ? -shift : shift, 0.0);
     vec3 color = HOOKED_tex(clamp(srcUv + offset, 0.0, 1.0)).rgb;

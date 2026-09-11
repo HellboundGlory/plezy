@@ -85,6 +85,12 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
 
     exitSubscription = _theater3d.onExit.listen((event) {
       settle();
+      // The in-scene depth control has no way back to prefs on its own, so
+      // whatever it was left at becomes the remembered strength for this
+      // title -- same scope the settings sheet writes to.
+      if (stereoMode == TheaterStereoMode.synthetic) {
+        unawaited(ScopedPlayerPrefs.write(ScopedPlayerPrefs.threeDStrength, _currentMetadata, event.strength));
+      }
       unawaited(resumeFlatPlayer(Duration(milliseconds: event.positionMs)));
     });
     errorSubscription = _theater3d.onError.listen((event) {
@@ -100,6 +106,7 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
         position: resumePosition,
         stereoMode: stereoMode,
         shaderPath: shaderPath,
+        strength: strength,
         hwdec: hwdec,
       );
     } catch (e, st) {

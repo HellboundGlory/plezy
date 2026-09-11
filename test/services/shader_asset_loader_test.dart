@@ -221,7 +221,7 @@ void main() {
   /// exactly along silhouettes, and a depth discontinuity there makes the two
   /// eyes disagree about where the edge is. No unit test can see that, so this
   /// is the tripwire.
-  test('the pseudo-3D depth proxy derives nothing from image gradients', () async {
+  test('the pseudo-3D depth proxy derives nothing from image derivatives', () async {
     final source = await bundledText('pseudo3d/Pseudo3DSbs.glsl');
     // Comments discuss the removed term on purpose; only code is checked.
     final code = source
@@ -232,8 +232,27 @@ void main() {
     for (final builtin in ['fwidth', 'dFdx', 'dFdy']) {
       expect(code, isNot(contains(builtin)), reason: '$builtin reintroduces edge-boundary depth artifacts');
     }
-    // Exactly one fetch: the disparity sample itself.
-    expect(RegExp(r'HOOKED_tex\(').allMatches(code).length, 1);
+    // Local detail comes from a wide blur instead, which is continuous by
+    // construction. Bounded so the fetch count cannot creep up unnoticed --
+    // this shader runs per pixel per eye, so taps are the cost that matters.
+    expect(RegExp(r'HOOKED_tex\(').allMatches(code).length, lessThanOrEqualTo(8));
+  });
+
+  /// The blur and the disparity sample are both taken in full-frame
+  /// coordinates. Sampling either through srcUv would straddle the fract()
+  /// wrap at uv.x == 0.5 and mix the two eye images into each other.
+  test('the pseudo-3D shader takes its multi-tap samples in unwrapped coordinates', () async {
+    final source = await bundledText('pseudo3d/Pseudo3DSbs.glsl');
+
+    final wrappedSamples = [
+      for (final (index, line) in source.split('\n').indexed)
+        if (!line.trimLeft().startsWith('//') &&
+            RegExp(r'HOOKED_tex\(\s*srcUv\s*[+-]').hasMatch(line))
+          '${index + 1}: ${line.trim()}',
+    ];
+
+    expect(wrappedSamples, isEmpty,
+        reason: 'a windowed sample through srcUv spans the fract() wrap and mixes the eye halves');
   });
 
   test('materializes one stable file per quantized strength', () async {

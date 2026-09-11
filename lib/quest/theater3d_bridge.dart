@@ -46,19 +46,25 @@ enum TheaterStereoMode {
 /// swipe-dismiss of the panel -- at [positionMs] into the source. The
 /// caller resumes its own paused flat-panel player there (see PLAN_3D.md
 /// 1.3: the flat mpv session is paused, not disposed, for the duration).
+///
+/// [strength] is the depth strength the in-scene control was left at. The
+/// native session owns no preferences, so persisting it is the caller's job
+/// (see `theater3d.dart`).
 class TheaterExitEvent {
-  const TheaterExitEvent(this.positionMs);
+  const TheaterExitEvent(this.positionMs, this.strength);
 
   final int positionMs;
+  final double strength;
 
   @override
-  String toString() => 'TheaterExitEvent(positionMs: $positionMs)';
+  String toString() => 'TheaterExitEvent(positionMs: $positionMs, strength: $strength)';
 
   @override
-  bool operator ==(Object other) => other is TheaterExitEvent && other.positionMs == positionMs;
+  bool operator ==(Object other) =>
+      other is TheaterExitEvent && other.positionMs == positionMs && other.strength == strength;
 
   @override
-  int get hashCode => positionMs.hashCode;
+  int get hashCode => Object.hash(positionMs, strength);
 }
 
 /// Theater session setup or playback failed (e.g. Spatial runtime
@@ -107,8 +113,14 @@ class Theater3DBridge {
   Stream<Map<Object?, Object?>> get _rawEvents => _events ??= _eventChannel.receiveBroadcastStream().cast<Map<Object?, Object?>>();
 
   /// Fires once per theater session that ends without error.
-  Stream<TheaterExitEvent> get onExit =>
-      _rawEvents.where((event) => event['event'] == 'onExit').map((event) => TheaterExitEvent((event['positionMs'] as num).toInt()));
+  Stream<TheaterExitEvent> get onExit => _rawEvents.where((event) => event['event'] == 'onExit').map(
+    (event) => TheaterExitEvent(
+      (event['positionMs'] as num).toInt(),
+      // Absent only if an older native session is talking to this Dart side;
+      // fall back to the neutral default rather than throwing on the stream.
+      (event['strength'] as num?)?.toDouble() ?? 0.5,
+    ),
+  );
 
   /// Fires for setup/playback failures. A session that reports an error
   /// never also reports an exit.
@@ -142,6 +154,11 @@ class Theater3DBridge {
   /// load. It is required rather than defaulted because the correct value
   /// depends on whether a shader is in the chain (see `theater3d.dart`), and
   /// a wrong-but-plausible default here silently means CPU decoding.
+  ///
+  /// [strength] is the depth strength [shaderPath] was materialized at. It
+  /// travels alongside the path so the in-scene controls can show the current
+  /// setting and re-bake on change without parsing the value back out of the
+  /// shader source.
   Future<void> open({
     required String uri,
     Map<String, String> headers = const {},
@@ -150,6 +167,7 @@ class Theater3DBridge {
     int? subtitleTrackId,
     required TheaterStereoMode stereoMode,
     String? shaderPath,
+    double strength = 0.5,
     required String hwdec,
   }) {
     return _methodChannel.invokeMethod<void>('open', {
@@ -160,6 +178,7 @@ class Theater3DBridge {
       'subtitleTrackId': subtitleTrackId,
       'stereoMode': stereoMode.wireValue,
       'shaderPath': shaderPath,
+      'strength': strength,
       'hwdec': hwdec,
     });
   }
