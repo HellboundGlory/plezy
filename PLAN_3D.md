@@ -406,17 +406,35 @@ why the artifact-prone `fwidth` term had to go and why what remains is stable
 but shallow. Real structure needs a model. Researched on 2026-09-11; the
 findings below are the scoping decision, not an estimate.
 
+**The migration itself is written up separately — see
+[`HANDOFF_RENDER_API.md`](HANDOFF_RENDER_API.md).** It also raises a decision
+this section does not: the render API costs the fork `vo=mediacodec`'s
+zero-copy path (straight MediaCodec→compositor, no GLES pass, HDR dataspace
+intact), and extending that vo instead is a genuine alternative. Read §0 of the
+handoff before committing to either.
+
 ### The model is the easy part
 
 | Candidate | Size | Notes |
 |---|---|---|
-| **Depth Anything V2 Small, quantized** | **19.2 MB** (`q4f16`, 256×256 in)<br>**27.3 MB** (`int8`/`uint8`, 256 or 512 in) | 24.8M params, **Apache-2.0**. Prebuilt, fused pre/post-processing ONNX models already exist and are proven on Android via ONNX Runtime (`shubham0204/Depth-Anything-Android`). **This is the pick.** |
-| Depth Anything V2 Small, fp16 | 49.8 MB | Unnecessary once a quantized build exists. |
+| **Depth Anything V2 Small, quantized** | **19.2 MB** (`q4f16`, 256×256 in)<br>**27.3 MB** (`int8`/`uint8`, 256 or 512 in) | 24.8M params, **Apache-2.0**. Prebuilt, fused pre/post-processing ONNX models already exist and are proven on Android via ONNX Runtime (`shubham0204/Depth-Anything-Android`). **The safe first step.** |
+| **Video Depth Anything Small** | 28.4M params, ~28 MB (no official quantized export) | **Apache-2.0.** CVPR 2025 Highlight. Same DINOv2 ViT-S + DPT backbone plus a temporal attention module, and its entire purpose is **temporal consistency on long video** — which is precisely the requirement that kills naive per-frame inference (flicker → depth swimming → nausea in a headset). Has an **experimental training-free streaming mode** that caches temporal-attention hidden states and feeds **one frame per inference**: exactly the realtime shape needed. |
 | Depth Anything V2 Small via ncnn/Vulkan | 50.6 MB | `FeiGeChuanShu/ncnn-android-depth_anything`. Its own README warns "most small models run slower on GPU than on CPU" on Android — do not assume Vulkan wins here. |
-| Depth Anything V2 Base / Large | 97.5M / 335.3M params | **CC-BY-NC-4.0** — non-commercial only. Disqualified for a shipped app, independent of size. |
+| Video/Depth Anything Base + Large | 97.5M–381.8M params | **CC-BY-NC-4.0** — non-commercial only. Disqualified for a shipped app, independent of size. |
 
-So: 19–27 MB, permissive licence, off-the-shelf Android path. Model selection
-is settled.
+**Either Small model is viable; DA V2 Small is the safer first integration, VDA
+Small is the better end state.** The authors of VDA state their streaming mode
+degrades quality (ScanNet `δ1` `0.926 → 0.836` offline→streaming) and call it
+experimental with fine-tuning left as future work. VDA also has **no
+off-the-shelf quantized ONNX** — DA V2 Small does — and its streaming cache reuse
+is a modified pipeline rather than a standard graph export, so the export would
+be ours to write and validate. Switching later is not a rewrite: both are the
+same DINOv2-ViT-S + DPT family, so one export/quantization pipeline serves both.
+Recommended order: DA V2 Small quantized first, VDA Small streaming second.
+
+Their reference latency (7.5 ms FP16 for a `1×32×518×518` batch on an **A100**)
+says nothing about XR2 Gen2 — treat any on-device figure as unmeasured until
+measured.
 
 ### The blocker is the plumbing, and it is the whole project
 
@@ -1140,3 +1158,47 @@ Do not fold any of this into the v1 estimate.
     builtins, 6 fetches). **Not verified**: that the slider now visibly changes
     depth on the headset, and whether the colour-weighted depth looks better in
     practice than the box-blurred version it replaces. Both need the device.
+
+- **2026-09-11 -- Render-API migration handed off; Video Depth Anything
+  evaluated.** No production code in this entry.
+  - **`HANDOFF_RENDER_API.md` (new)** documents the mpv render-API migration in
+    full: a complete inventory of what the current vo-path owns and the
+    migration must replace (vo selection, `GpuVoPolicy`'s four routing reasons,
+    the OSD/subtitle plane + `OsdPlanePolicy`, `VideoRectPolicy`'s view-geometry
+    trick, DV reshaping, HDR tone mapping, frame-rate/display matching, JNI
+    surface), the target architecture (mpv → our FBO → our warp shader → panel
+    Surface), a work breakdown, the 13 landmines Phases 0–2 already paid for, the
+    reusable verification techniques, and 7 open questions.
+  - **It opens with a decision, not an assumption.** Moving to the render API
+    **costs the fork `vo=mediacodec`'s zero-copy path** — buffers straight to the
+    Android compositor with per-frame PTS, no GLES pass, 10-bit and the decoder's
+    dataspace intact. The render API adds a per-frame GLES pass per eye on a
+    headset and makes HDR/10-bit and subtitles **ours** to maintain. Extending
+    the fork vo instead (we own `edde746/mpv-build`) would keep all of that and
+    still give the depth warp somewhere to run, at the cost of C changes in a
+    second repo with its own content-addressed publish cycle. The handoff
+    tabulates both and recommends deciding before any code — which is why it is
+    a handoff and not a commit.
+  - **Verified that the render API is genuinely unwired**: `mpv_render_context`
+    appears only in the shipped headers (`include/mpv/render.h`, `render_gl.h`)
+    and nowhere in any `.cpp`/`.kt` in the repo, and `render.cpp` does only
+    `wid` / `vo-mediacodec-osd-surface` attachment. So this is new work in JNI,
+    Kotlin, EGL and GL — not a switch.
+  - **Video Depth Anything (VDA) Small evaluated** at the user's suggestion and
+    added to Phase 3's model table. 28.4M params, **Apache-2.0**, CVPR 2025
+    Highlight, and — the point — it is built for **temporal consistency on long
+    video**, with an experimental training-free **streaming mode** that caches
+    temporal-attention hidden states and feeds one frame per inference. That is
+    the requirement that otherwise kills naive per-frame depth (flicker →
+    swimming → nausea in a headset). Recorded honestly: the authors state
+    streaming degrades quality (ScanNet `δ1` `0.926 → 0.836`) and call it
+    experimental, there is **no off-the-shelf quantized ONNX** (DA V2 Small has
+    one), and the streaming cache reuse is a modified pipeline rather than a
+    standard export. Recommendation: **DA V2 Small quantized first** (smallest,
+    off-the-shelf, proven Android path), VDA Small streaming second — not a
+    rewrite later, since both are the same DINOv2-ViT-S + DPT family and one
+    export pipeline serves both. Their published latency is A100-based and says
+    nothing about XR2 Gen2.
+  - **Unchanged and still open**: on-device confirmation that the depth slider
+    visibly works and that the joint-bilateral depth looks better than the
+    box-blurred version.
