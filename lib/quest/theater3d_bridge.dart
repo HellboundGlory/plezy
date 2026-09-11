@@ -118,8 +118,17 @@ class Theater3DBridge {
   /// Launches `Theater3DActivity` with everything needed to resume the
   /// exact session the flat-panel player is showing: [uri]/[headers]
   /// identical to what was passed to its own `open`, [position] its current
-  /// playback position, and the selected [stereoMode] (plus
-  /// [shaderStrength], only meaningful for [TheaterStereoMode.synthetic]).
+  /// playback position, and the selected [stereoMode]. [shaderPath] is the
+  /// heuristic pseudo-3D shader to run inside the theater session's own mpv
+  /// instance, materialized at the selected strength by
+  /// `ShaderAssetLoader.materializePseudo3DShader` -- it is only meaningful
+  /// for [TheaterStereoMode.synthetic], and null for real SBS/OU passthrough
+  /// content, which already has parallax and must not be re-processed.
+  ///
+  /// Strength travels as a path, not a number, because mpv can only
+  /// override a user shader's `//!PARAM` on `vo=gpu-next`; the theater
+  /// session's GL backend is chosen per file, so the value is baked into the
+  /// shader source instead. See that method's doc comment.
   ///
   /// Only one theater session is allowed at a time; calling this while one
   /// is already active rejects with a [PlatformException]
@@ -135,7 +144,7 @@ class Theater3DBridge {
     int? audioTrackId,
     int? subtitleTrackId,
     required TheaterStereoMode stereoMode,
-    double shaderStrength = 0.5,
+    String? shaderPath,
   }) {
     return _methodChannel.invokeMethod<void>('open', {
       'uri': uri,
@@ -144,7 +153,7 @@ class Theater3DBridge {
       'audioTrackId': audioTrackId,
       'subtitleTrackId': subtitleTrackId,
       'stereoMode': stereoMode.wireValue,
-      'shaderStrength': shaderStrength,
+      'shaderPath': shaderPath,
     });
   }
 }

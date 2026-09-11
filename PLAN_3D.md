@@ -257,14 +257,46 @@ vec4 hook() {
 ```
 
 This is the **heuristic** tier from the research report, deliberately — no
-model inference inside mpv's shader stage. `strength` is a real mpv
-user-shader `//!PARAM`, so unlike `ambient_lighting_service.dart`'s
-regenerate-on-change approach, this one can expose a live-updating uniform
-via `change-list glsl-opts` if mpv's version in use supports param overrides;
-if not, fall back to the regenerate-and-re-append pattern already proven
-there. Confirm which at implementation time — a `//!PARAM` slider is strictly
-nicer UX (drag the strength slider during playback with no re-append
-stutter) if the pinned mpv build supports it.
+model inference inside mpv's shader stage.
+
+**Corrected 2026-09-11 — two load-bearing points in the block above were
+wrong, both found while wiring it into the theater path:**
+
+1. **The eye mapping was broken.** The block samples `uv` (the full-frame
+   `HOOKED_pos`) once and then selects `left`/`right` per output half, but
+   only remaps `x` into `srcUv` — which nothing then uses. Since the
+   compositor's `StereoMode.LeftRight` gives the left half of the frame to
+   the left eye and the right half to the right eye, each eye would have
+   received a different *half of the picture* rather than the whole picture
+   at a horizontally-disparate offset: a 2× horizontal crop per eye, not a
+   stereo pair. Fixed by mapping the output half back to the full `[0,1]`
+   source range first (`srcUv`), then applying the per-eye shift to that.
+   Proven offline against the old code: with disparity disabled the old
+   mapping differs from the whole-frame ground truth by 1.0 (saturated —
+   each eye gets the wrong half), the fixed one by 0.0; and the disparity
+   direction checks out geometrically (near content samples crossed, so it
+   reads as in front of the panel).
+2. **`strength` cannot be a runtime override.** The guess above —
+   `change-list glsl-opts` — is not even the option name; it is
+   `--glsl-shader-opts`, and in the pinned mpv (v0.41.0) it is honoured by
+   **`vo=gpu-next` only**: `vo_gpu_next.c` is that option's sole consumer,
+   while the classic `vo=gpu` compiler `parse_user_shader()` takes no
+   options at all and therefore always uses the `//!PARAM` block's in-file
+   default. The theater session runs `vo=gpu,gpu-next` (gpu primary, gpu-next
+   as fallback) so it must not depend on which one a given file lands on.
+   Resolution: the **fallback** the plan already named — the strength is
+   baked into a per-strength copy of the shader instead, which is exactly
+   the regenerate-and-re-append pattern already proven in
+   `ambient_lighting_service.dart`. See
+   `ShaderAssetLoader.materializePseudo3DShader`. The nicer live-updating
+   slider is still unavailable in this mpv build; strength changes take
+   effect on the next theater launch, which is when they are set anyway.
+
+Section 2.4's detector has the same class of latent gap: `ThreeDMode.auto`
+resolves through `detectFromFileName` only, so the aspect-ratio fallback is
+never reached in practice. Not fixed here — the filename heuristic is the
+one every VR release actually uses, and a false positive is worse than a
+miss (it would raw-split a flat source).
 
 ### 2.2 Data model
 
@@ -762,3 +794,76 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
     vo chain -- `MpvPlayerCore` already forces `vo=gpu,gpu-next` for the
     headless session, which is what makes a `glsl-shaders` append viable
     at all.
+
+- **2026-09-11 -- Heuristic 2D->3D shader wired into the theater path.**
+  The gap the two entries above describe is closed: `ThreeDMode.auto` on
+  genuinely flat content now synthesizes depth instead of raw-splitting the
+  frame, so any source can be turned into 3D. Implemented as scoped, then
+  verified to the extent this machine allows.
+  - **Two real bugs found in the shipped shader before wiring it**, both
+    covered in the correction now inline in 2.1: the eye mapping gave each
+    eye a different *half of the picture* rather than the whole picture at a
+    disparate offset (a 2x horizontal crop per eye -- i.e. doubly wrong, not
+    merely depth-less), and `strength` was being routed to an mpv option
+    that cannot actually override a user-shader `//!PARAM` on the vo this
+    path uses. The mapping fix was proven offline by emulating both GLSL
+    versions over a synthetic frame: with disparity off, the old mapping
+    differs from whole-frame ground truth by 1.0 (saturated) and the fixed
+    one by 0.0. Disparity direction was checked the same way -- near content
+    samples crossed (reads as in front of the panel), far content uncrossed.
+  - **Strength is materialized, not passed.** `ShaderAssetLoader` gained
+    `materializePseudo3DShader(strength)`, which writes a per-strength copy
+    of `Pseudo3DSbs.glsl` into the app cache with the `//!PARAM strength`
+    default substituted, and `getPseudo3DShaders`/`getShadersForPreset` now
+    route through it -- so the previously-dead strength value on that path
+    is honoured rather than ignored. One mechanism, no runtime
+    override dependency: `--glsl-shader-opts` is honoured by `vo=gpu-next`
+    alone in the pinned mpv v0.41.0 (`vo_gpu_next.c` is its only consumer;
+    classic `vo=gpu`'s `parse_user_shader()` takes no options at all).
+    Paths are quantized to 1% so a repeat launch at the same setting reuses
+    the same file. Note the *theater* path is still the only production
+    consumer of any of this: `applyPreset`'s `threeDConfig`/`isPassthroughSource`
+    hook has no production caller today, so the flat panel keeps rendering
+    2D -- which is correct, since a flat panel has no way to show a stereo
+    pair and would only display the squished frame.
+  - **The wire contract changed shape**: `shaderStrength: Double` became
+    `shaderPath: String?` end to end (`theater3d_bridge.dart` ->
+    `Theater3DChannel.kt` -> `Theater3DBridge.TheaterOpenRequest` ->
+    `TheaterMpvSession`), because the native side now only ever consumes an
+    already-materialized file path and never needs to know what strength
+    meant. `TheaterMpvSession.openRequestedMedia` appends it to the headless
+    session's `glsl-shaders` before `loadfile`, so the list is populated
+    before vo init compiles the user-shader chain. Set for `synthetic` only
+    -- real SBS/OU passthrough carries parallax already and must not be
+    re-processed.
+  - **Verified here**: `dart analyze` clean on every changed file; the three
+    affected/adjacent suites pass (30 tests) including new assertions that
+    pin the bake -- that only the default line changes, that the PARAM block
+    and hook body survive byte-for-byte (which is what guards the
+    substitution regex against asset drift), and that a strength maps to a
+    stable path; `:app:compileDebugKotlin` passes both default and
+    `THEATER_MODE=1`, plus `:theater3d`'s own JVM unit tests.
+  - **Not verified here, and the one real remaining risk**: how it *looks*
+    on the headset. The heuristic is a cheap depth proxy, not real depth
+    estimation -- expect a modest, somewhat flat pop rather than convincing
+    3D, and expect artifacts on complex footage *and specifically on
+    subtitles*, since this hooks `MAIN` and the pseudo-3D pass reads no
+    subtitle plane: in the headless theater session subtitles do not render
+    at all (`MpvPlayerCore`'s headless mode has no OSD plane), so this is
+    moot today, but it becomes a real artifact the moment subtitle support
+    reaches that path. Depth strength is the tuning knob and its default
+    (0.5, i.e. a max shift of 1% of frame width) is deliberately
+    conservative. Needs a real Quest 3 pass to judge.
+  - **How to diagnose that pass if the synthetic modes look wrong**: mpv
+    renders a solid blue panel (`0.0, 0.05, 0.5`, its
+    `broken_frame` fallback in `video.c`) when a user shader fails to
+    compile or link, and it logs the full GLSL compile log at error level
+    -- which `TheaterMpvSession.onEvent` already forwards to logcat as
+    `Log.e(TAG, ...)`. So a blue theater panel means "read the shader
+    compile log", not "the compositor broke". Worth knowing because the
+    shader is this repo's only user shader using `fwidth` (for the
+    local-contrast term); it is core in the `#version 300 es` mpv emits on
+    Android, but that is the line to check first if it ever fails. A
+    *non*-blue but doubled/cropped picture is the opposite signal: the
+    shader is not running at all, so check the `Appending pseudo-3D
+    shader:` log line `TheaterMpvSession` now emits.

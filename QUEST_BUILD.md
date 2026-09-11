@@ -739,16 +739,35 @@ builds (desktop fullscreen is untouched, now driven directly by
 opening a new 3D view in `VideoSettingsSheet` (mode: off/auto/sbs/ou,
 plus a strength slider), backed by `ThreeDConfig`/`ThreeDMode`
 (`lib/models/shader_preset.dart`), per-title-scoped prefs
-(`ScopedPlayerPrefs.threeDMode`/`.threeDStrength`), a heuristic
-depth+parallax GLSL shader (`assets/shaders/pseudo3d/Pseudo3DSbs.glsl`,
-applied via `shader_service.dart`), and filename/aspect-ratio auto-detect
-(`lib/utils/stereo_source_detector.dart`). `Theater3DBridge.isAvailable`
-requires **both** `THEATER_MODE=1` (native module) and
-`--dart-define=THEATER_MODE_BUILD=true` (Dart gate) at build time — see
-the note above. Unit-tested (Dart); **not yet verified on-device** — the
-full open → real per-eye stereo → exit → resume path via the new button
-still needs an actual Quest 3 pass, since Phase 1's device verification
-predates this trigger existing.
+(`ScopedPlayerPrefs.threeDMode`/`.threeDStrength`), and filename
+auto-detect (`lib/utils/stereo_source_detector.dart`).
+`Theater3DBridge.isAvailable` requires **both** `THEATER_MODE=1` (native
+module) and `--dart-define=THEATER_MODE_BUILD=true` (Dart gate) at build
+time — see the note above.
+
+**What actually runs inside the theater session** is a *second*, headless
+`MpvPlayerCore` (`TheaterMpvSession`), not the flat player's
+`shader_service.dart` path — the two mpv instances are independent, and
+only the flat one is driven over a `MethodChannel`. So the two 3D tiers
+are wired in different places:
+
+| Mode | Mechanism |
+| ---- | --------- |
+| `sbs` / `ou`, and `auto` on a filename-detected 3D master | Nothing runs in mpv. The compositor splits the frame the way the source is already packed (`StereoModeResolver`). |
+| `auto` on everything else (`synthetic`) | `ShaderAssetLoader.materializePseudo3DShader(strength)` writes a per-strength copy of `assets/shaders/pseudo3d/Pseudo3DSbs.glsl` into the app cache; its path crosses the bridge as `shaderPath` and `TheaterMpvSession` appends it to the session's `glsl-shaders` before `loadfile`. The shader runs inside mpv's own vo chain. |
+
+Strength is baked into that shader copy rather than overridden at runtime
+because `--glsl-shader-opts` is honoured by `vo=gpu-next` alone in the
+pinned mpv (v0.41.0), and the theater session's GL backend is chosen per
+file. Changing the strength slider therefore takes effect on the next
+theater launch — which is when it is set anyway.
+
+**Verified on-device**: real frame-packed SBS masters display correctly in
+`sbs` and `auto` (confirmed on a Quest 3 by eye, 2026-09-11), as do `ou`
+and the panel/controls rendering and clean exit→resume handback. **Not yet
+verified on-device**: how the *heuristic* tier looks — the shader is wired
+and its maths is unit-tested, but its depth proxy is a cheap heuristic and
+its quality on real footage has not been judged on the headset.
 
 ## Known considerations
 

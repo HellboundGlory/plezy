@@ -81,6 +81,18 @@ class TheaterMpvSession(
       playerCore.command(arrayOf("change-list", "http-header-fields", "append", "$key: $value"))
     }
 
+    // The heuristic pseudo-3D shader, when this mode synthesizes depth at all
+    // (null for real SBS/OU passthrough -- see
+    // [Theater3DBridge.TheaterOpenRequest.shaderPath]). Appended before
+    // `loadfile` so the list is already populated when the GL vo initializes
+    // on the first frame: vo=gpu compiles the whole user-shader chain during
+    // that init, and a fresh session's list starts empty, so there is
+    // nothing to clear first.
+    request.shaderPath?.let { shaderPath ->
+      Log.i(TAG, "Appending pseudo-3D shader: $shaderPath")
+      playerCore.command(arrayOf("change-list", "glsl-shaders", "append", shaderPath))
+    }
+
     if (request.positionMs > 0) {
       playerCore.setProperty("start", (request.positionMs / 1000.0).toString())
     } else {

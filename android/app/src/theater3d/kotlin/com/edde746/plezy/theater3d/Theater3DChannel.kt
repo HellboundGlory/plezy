@@ -79,7 +79,7 @@ class Theater3DChannel(
         audioTrackId = (args["audioTrackId"] as? Number)?.toInt(),
         subtitleTrackId = (args["subtitleTrackId"] as? Number)?.toInt(),
         stereoMode = args["stereoMode"] as? String ?: "off",
-        shaderStrength = (args["shaderStrength"] as? Number)?.toDouble() ?: 0.5
+        shaderPath = args["shaderPath"] as? String
       )
 
     val session = TheaterMpvSession(activity, request, sessionCallback)

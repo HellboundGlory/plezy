@@ -30,6 +30,25 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
     final resumePosition = currentPlayer.state.position;
     await currentPlayer.pause();
 
+    final stereoMode = _resolveTheaterStereoMode(mode);
+    // Only the synthetic (heuristic-depth) mode runs a shader inside the
+    // theater session: real SBS/OU passthrough already carries parallax, and
+    // re-processing it would split the split rather than add depth. The
+    // strength is baked into the shader source by the loader because mpv can
+    // only override a `//!PARAM` on vo=gpu-next, while the theater session's
+    // GL backend is picked per file -- see
+    // `ShaderAssetLoader.materializePseudo3DShader`.
+    String? shaderPath;
+    if (stereoMode == TheaterStereoMode.synthetic) {
+      shaderPath = await ShaderAssetLoader.materializePseudo3DShader(strength);
+      if (shaderPath == null) {
+        appLogger.e(
+          'Pseudo-3D shader unavailable; without it the compositor would show each eye a '
+          'different half of the flat frame, so theater mode will look cropped and doubled',
+        );
+      }
+    }
+
     late final StreamSubscription<TheaterExitEvent> exitSubscription;
     late final StreamSubscription<TheaterErrorEvent> errorSubscription;
     var settled = false;
@@ -62,8 +81,8 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
         uri: videoUrl,
         headers: _lastOpenedHeaders ?? const {},
         position: resumePosition,
-        stereoMode: _resolveTheaterStereoMode(mode),
-        shaderStrength: strength,
+        stereoMode: stereoMode,
+        shaderPath: shaderPath,
       );
     } catch (e, st) {
       settle();

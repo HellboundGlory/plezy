@@ -1,5 +1,5 @@
 import 'dart:async' show unawaited;
-
+import 'dart:convert' show utf8;
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -51,6 +51,11 @@ class ShaderAssetLoader {
   /// Heuristic pseudo-3D SBS shader (PLAN_3D.md Phase 2). Not keyed to any
   /// [ShaderPresetType] -- [ThreeDConfig] is an orthogonal overlay appended
   /// on top of whichever preset (including none) is already active.
+  ///
+  /// This is the source template, never the path handed to mpv for playback:
+  /// strength has to be baked into a per-strength copy of it, since mpv can
+  /// only override a `//!PARAM` on `vo=gpu-next` (see
+  /// [materializePseudo3DShader]).
   static const String _pseudo3DShader = 'pseudo3d/Pseudo3DSbs.glsl';
 
   /// Get the application-owned shader cache directory, creating it if needed.
@@ -218,11 +223,110 @@ class ShaderAssetLoader {
     return shaders;
   }
 
+  /// Strength granularity baked into a materialized pseudo-3D shader. The
+  /// value is rounded to this before being written, so the resulting path is
+  /// a stable function of the percentage the settings sheet displays
+  /// (`_formatThreeDStrength`) and a repeat launch at the same setting
+  /// reuses the same file.
+  static const double pseudo3DStrengthGranularity = 0.01;
+
+  static final Map<String, Future<String?>> _inFlightBakedPseudo3D = {};
+  static final Map<String, String> _verifiedBakedPseudo3D = {};
+
+  /// Materializes [Pseudo3DSbs.glsl] with [strength] written into its
+  /// `//!PARAM strength` default, returning the path to that copy (null if
+  /// it could not be written).
+  ///
+  /// The value is baked into a per-strength copy rather than overridden at
+  /// runtime because `--glsl-shader-opts` -- the only mpv option that can
+  /// override a user-shader `//!PARAM` -- is honoured by `vo=gpu-next`
+  /// alone in the mpv this repo pins: `vo_gpu_next.c` is that option's only
+  /// consumer, while the classic `vo=gpu` compiler (`parse_user_shader`)
+  /// takes no options at all, so a `vo=gpu` session would silently ignore
+  /// it. The theater path picks its GL backend per file
+  /// (`MpvPlayerCore.initialVideoOutput`), so it cannot depend on which one
+  /// a given session lands on. See PLAN_3D.md Phase 2 section 2.1, which
+  /// left exactly this question open, and the changelog entry that closed
+  /// it.
+  static Future<String?> materializePseudo3DShader(double strength) {
+    final steps = (strength.clamp(0.0, 1.0) / pseudo3DStrengthGranularity).round();
+    final quantized = steps * pseudo3DStrengthGranularity;
+    final key = quantized.toStringAsFixed(2);
+    final generation = _cacheGeneration;
+    final operationKey = '$generation:$key';
+    final active = _inFlightBakedPseudo3D[operationKey];
+    if (active != null) return active;
+
+    final operation = _writeBakedPseudo3DShader(key, generation);
+    _inFlightBakedPseudo3D[operationKey] = operation;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_inFlightBakedPseudo3D[operationKey], operation)) {
+          _inFlightBakedPseudo3D.remove(operationKey);
+        }
+      }),
+    );
+    return operation;
+  }
+
+  static Future<String?> _writeBakedPseudo3DShader(String key, int generation) async {
+    try {
+      final verified = _verifiedBakedPseudo3D[key];
+      if (verified != null) {
+        if (await File(verified).exists()) return verified;
+        _verifiedBakedPseudo3D.remove(key);
+      }
+
+      final data = await rootBundle.load('$_shaderAssetBase/$_pseudo3DShader');
+      final source = utf8.decode(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      final baked = _bakePseudo3DStrength(source, key);
+      if (baked == null) {
+        // Only reachable if the bundled shader stops exposing `strength`;
+        // the shader's own default is then used rather than failing the
+        // session. `shader_asset_loader_test.dart` pins the block's shape so
+        // this cannot rot silently.
+        appLogger.e('Pseudo-3D shader exposes no strength parameter to bake; falling back to its bundled default');
+        return await _extractShader(_pseudo3DShader);
+      }
+      final bytes = utf8.encode(baked);
+
+      final shaderDir = await _getShaderDirectory();
+      final targetDir = Directory(path.join(shaderDir, 'pseudo3d'));
+      if (!await targetDir.exists()) {
+        await targetDir.create(recursive: true);
+      }
+      final targetFile = File(path.join(targetDir.path, 'Pseudo3DSbs_s${key.replaceAll('.', '')}.glsl'));
+
+      if (!await _fileMatches(targetFile, bytes)) {
+        await targetFile.writeAsBytes(bytes, flush: true);
+      }
+      if (generation == _cacheGeneration) {
+        _verifiedBakedPseudo3D[key] = targetFile.path;
+      }
+      return targetFile.path;
+    } catch (e, st) {
+      appLogger.w('Failed to materialize pseudo-3D shader at strength $key', error: e, stackTrace: st);
+      return null;
+    }
+  }
+
+  /// Replaces the default value of the `//!PARAM strength` block with
+  /// [value], returning null when the file defines no such block. The
+  /// default is the first non-metadata line after the block's headers, so
+  /// only a bare numeric literal on its own line is a candidate.
+  static String? _bakePseudo3DStrength(String source, String value) {
+    final pattern = RegExp(
+      r'(//!PARAM[ \t]+strength\b[^\n]*\n(?:[ \t]*//![^\n]*\n)*)([ \t]*)([0-9]*\.?[0-9]+)',
+    );
+    if (!pattern.hasMatch(source)) return null;
+    return source.replaceFirstMapped(pattern, (match) => '${match[1]}${match[2]}$value');
+  }
+
   /// Get the shader file path for the heuristic pseudo-3D SBS shader
-  /// (PLAN_3D.md Phase 2). Returns a list containing the single
-  /// Pseudo3DSbs.glsl path, or empty on extraction failure.
-  static Future<List<String>> getPseudo3DShaders() async {
-    final shaderPath = await _extractShader(_pseudo3DShader);
+  /// (PLAN_3D.md Phase 2), with [strength] baked into its source. Returns a
+  /// list containing the single materialized path, or empty on failure.
+  static Future<List<String>> getPseudo3DShaders({required double strength}) async {
+    final shaderPath = await materializePseudo3DShader(strength);
     if (shaderPath == null) return [];
     return [shaderPath];
   }
@@ -283,13 +387,14 @@ class ShaderAssetLoader {
   ///
   /// [threeDConfig] appends the heuristic pseudo-3D SBS shader after the
   /// preset's own shaders (PLAN_3D.md Phase 2) when its mode is anything but
-  /// [ThreeDMode.off]. Pass null for already-3D passthrough content -- it
-  /// needs [ThreeDMode] only to select `stereoMode`, never this shader (see
+  /// [ThreeDMode.off], materialized with [ThreeDConfig.strength] baked in.
+  /// Pass null for already-3D passthrough content -- it needs [ThreeDMode]
+  /// only to select `stereoMode`, never this shader (see
   /// `ShaderService.applyPreset`).
   static Future<List<String>> getShadersForPreset(ShaderPreset preset, {ThreeDConfig? threeDConfig}) async {
     final baseShaders = await _shadersForPresetType(preset);
     if (threeDConfig == null || threeDConfig.mode == ThreeDMode.off) return baseShaders;
-    return [...baseShaders, ...await getPseudo3DShaders()];
+    return [...baseShaders, ...await getPseudo3DShaders(strength: threeDConfig.strength)];
   }
 
   static Future<List<String>> _shadersForPresetType(ShaderPreset preset) async {
@@ -319,5 +424,6 @@ class ShaderAssetLoader {
     _cacheGeneration++;
     _cachedShaderDir = null;
     _verifiedBuiltInShaderPaths.clear();
+    _verifiedBakedPseudo3D.clear();
   }
 }

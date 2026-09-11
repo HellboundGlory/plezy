@@ -41,6 +41,16 @@ object Theater3DBridge {
    * SDK's own `StereoMode` enum -- see [StereoModeResolver] -- so that
    * android/app's Theater3DChannel, which builds this request, never needs
    * a Spatial SDK dependency either.
+   *
+   * [shaderPath] is an already-materialized mpv user-shader file for
+   * [TheaterMpvSession] to append to the headless session's `glsl-shaders`
+   * before its `loadfile`, or null for real SBS/OU passthrough content.
+   * It is a path rather than a strength value because mpv can only override
+   * a user shader's `//!PARAM` on `vo=gpu-next`, and the theater session's
+   * GL backend is chosen per file -- so the strength is baked into the
+   * shader's source by Dart (`ShaderAssetLoader.materializePseudo3DShader`,
+   * which also owns the extraction directory), and the native side only
+   * ever consumes a file path.
    */
   data class TheaterOpenRequest(
     val uri: String,
@@ -49,7 +59,7 @@ object Theater3DBridge {
     val audioTrackId: Int?,
     val subtitleTrackId: Int?,
     val stereoMode: String,
-    val shaderStrength: Double
+    val shaderPath: String?
   )
 
   interface Listener {

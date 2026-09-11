@@ -1,3 +1,4 @@
+import 'dart:convert' show utf8;
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -43,6 +44,23 @@ void main() {
 
   Future<void> expectBundledFile(String filePath, String assetPath) async {
     expect(await File(filePath).readAsBytes(), await bundledBytes(assetPath));
+  }
+
+  Future<String> bundledText(String assetPath) async => utf8.decode(await bundledBytes(assetPath));
+
+  /// The value a materialized shader actually carries in its `//!PARAM
+  /// strength` block -- what mpv reads as that parameter's default, as
+  /// opposed to a substring that happens to appear somewhere in the file.
+  String bakedPseudo3DStrength(File file) {
+    final lines = file.readAsStringSync().split('\n');
+    final paramIndex = lines.indexWhere((line) => line.trimLeft().startsWith('//!PARAM'));
+    expect(paramIndex, isNonNegative, reason: 'materialized shader must keep its PARAM block');
+    final defaultIndex = lines.indexWhere(
+      (line) => RegExp(r'^[0-9]*\.?[0-9]+$').hasMatch(line.trim()),
+      paramIndex + 1,
+    );
+    expect(defaultIndex, isNonNegative, reason: 'materialized shader must keep a default value line');
+    return lines[defaultIndex].trim();
   }
 
   test('traversal and absolute names cannot load or delete outside managed directory', () async {
@@ -136,32 +154,60 @@ void main() {
     }
   });
 
-  test('materializes the pseudo-3D shader with bundled bytes', () async {
-    final shaders = await ShaderAssetLoader.getPseudo3DShaders();
+  test('materializes the pseudo-3D shader with the requested strength baked into its source', () async {
+    final shaderPath = await ShaderAssetLoader.materializePseudo3DShader(0.75);
+    expect(shaderPath, isNotNull);
 
-    expect(shaders, hasLength(1));
-    await expectBundledFile(shaders.single, 'pseudo3d/Pseudo3DSbs.glsl');
+    final bundledLines = (await bundledText('pseudo3d/Pseudo3DSbs.glsl')).split('\n');
+    final bakedLines = await File(shaderPath!).readAsString().then((s) => s.split('\n'));
+
+    expect(bakedLines, hasLength(bundledLines.length));
+    final differing = [
+      for (var i = 0; i < bundledLines.length; i++)
+        if (bundledLines[i] != bakedLines[i]) i,
+    ];
+    // Only the PARAM block's default line changes: the metadata that defines
+    // the parameter and the whole hook body must survive byte-for-byte.
+    expect(differing, hasLength(1));
+    expect(bundledLines[differing.single].trim(), '0.5');
+    expect(bakedLines[differing.single].trim(), '0.75');
+    expect(bakedLines[differing.single - 1].trim(), '//!MAXIMUM 1.0');
   });
 
-  test('getShadersForPreset appends the pseudo-3D shader after the preset when a synthetic 3D config is given', () async {
+  test('materializes one stable file per quantized strength', () async {
+    final first = await ShaderAssetLoader.materializePseudo3DShader(0.25);
+    final repeat = await ShaderAssetLoader.materializePseudo3DShader(0.25);
+    final other = await ShaderAssetLoader.materializePseudo3DShader(0.8);
+
+    expect(first, isNotNull);
+    // A repeat launch at the same setting must reuse the file rather than
+    // write a sibling, and 0.8 must not collide with 0.25.
+    expect(repeat, first);
+    expect(other, isNot(first));
+    expect(bakedPseudo3DStrength(File(other!)), '0.80');
+    // Out-of-range input is clamped rather than written raw into the source.
+    expect(bakedPseudo3DStrength(File((await ShaderAssetLoader.materializePseudo3DShader(4))!)), '1.00');
+  });
+
+  test('getShadersForPreset appends the pseudo-3D shader at the configured strength', () async {
     final shaders = await ShaderAssetLoader.getShadersForPreset(
       ShaderPreset.nvscalerDefault,
-      threeDConfig: const ThreeDConfig(mode: ThreeDMode.auto, strength: 0.5),
+      threeDConfig: const ThreeDConfig(mode: ThreeDMode.auto, strength: 0.75),
     );
 
     expect(shaders, hasLength(2));
     await expectBundledFile(shaders[0], 'nvscaler/NVScaler.glsl');
-    await expectBundledFile(shaders[1], 'pseudo3d/Pseudo3DSbs.glsl');
+    expect(bakedPseudo3DStrength(File(shaders[1])), '0.75');
   });
 
   test('getShadersForPreset appends the pseudo-3D shader even when the base preset is none', () async {
     final shaders = await ShaderAssetLoader.getShadersForPreset(
       ShaderPreset.none,
-      threeDConfig: const ThreeDConfig(mode: ThreeDMode.sbs, strength: 0.5),
+      threeDConfig: const ThreeDConfig(mode: ThreeDMode.sbs, strength: 0.6),
     );
 
     expect(shaders, hasLength(1));
-    await expectBundledFile(shaders.single, 'pseudo3d/Pseudo3DSbs.glsl');
+    expect(bakedPseudo3DStrength(File(shaders.single)), '0.60');
   });
 
   test('getShadersForPreset omits the pseudo-3D shader when the 3D mode is off', () async {

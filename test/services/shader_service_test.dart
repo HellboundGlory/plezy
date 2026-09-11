@@ -60,7 +60,9 @@ void main() {
     final appended = player.commands.where((c) => c.length > 2 && c[2] == 'append').map((c) => c[3]).toList();
     expect(appended, hasLength(2));
     expect(path.basename(appended[0]), 'NVScaler.glsl');
-    expect(path.basename(appended[1]), 'Pseudo3DSbs.glsl');
+    // The strength-selected materialization, not the bundled template: the
+    // `_s050` suffix is the 0.5 in the ThreeDConfig above.
+    expect(path.basename(appended[1]), 'Pseudo3DSbs_s050.glsl');
   });
 
   test('applies the pseudo-3D shader alone even when the base preset is none', () async {
@@ -71,7 +73,7 @@ void main() {
 
     final appended = player.commands.where((c) => c.length > 2 && c[2] == 'append').map((c) => c[3]).toList();
     expect(appended, hasLength(1));
-    expect(path.basename(appended.single), 'Pseudo3DSbs.glsl');
+    expect(path.basename(appended.single), 'Pseudo3DSbs_s050.glsl');
   });
 
   test('skips the pseudo-3D shader entirely for already-3D passthrough content', () async {

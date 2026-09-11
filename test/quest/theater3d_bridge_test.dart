@@ -42,7 +42,7 @@ void main() {
     });
   });
 
-  test('open sends every field the native StereoModeResolver/loadfile path needs', () async {
+  test('open sends every field the native loadfile/stereo/shader path needs', () async {
     MethodCall? call;
     messenger.setMockMethodCallHandler(const MethodChannel(_methodChannelName), (methodCall) async {
       call = methodCall;
@@ -56,8 +56,8 @@ void main() {
       position: const Duration(milliseconds: 45500),
       audioTrackId: 2,
       subtitleTrackId: 3,
-      stereoMode: TheaterStereoMode.sbs,
-      shaderStrength: 0.75,
+      stereoMode: TheaterStereoMode.synthetic,
+      shaderPath: '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
     );
 
     expect(call?.method, 'open');
@@ -67,12 +67,12 @@ void main() {
       'positionMs': 45500,
       'audioTrackId': 2,
       'subtitleTrackId': 3,
-      'stereoMode': 'sbs',
-      'shaderStrength': 0.75,
+      'stereoMode': 'synthetic',
+      'shaderPath': '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
     });
   });
 
-  test('open defaults to off/no tracks/zero position when unset', () async {
+  test('open defaults to off/no tracks/zero position and no shader when unset', () async {
     MethodCall? call;
     messenger.setMockMethodCallHandler(const MethodChannel(_methodChannelName), (methodCall) async {
       call = methodCall;
@@ -89,7 +89,7 @@ void main() {
       'audioTrackId': null,
       'subtitleTrackId': null,
       'stereoMode': 'off',
-      'shaderStrength': 0.5,
+      'shaderPath': null,
     });
   });
 

@@ -70,6 +70,7 @@ import '../services/video_filter_manager.dart';
 import '../services/video_volume_controller.dart';
 import '../services/pip_service.dart';
 import '../services/shader_service.dart';
+import '../services/shader_asset_loader.dart';
 import '../providers/shader_provider.dart';
 import '../providers/account_preferences_controller.dart';
 import '../utils/app_logger.dart';

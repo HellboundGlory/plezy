@@ -15,15 +15,20 @@ import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 /**
  * Builds the [PanelRegistration] for the theater's video panel: a
  * [VideoSurfacePanelRegistration]. The `Readable` variant was tried first
- * (for Phase 2's future post-process shader) but its surface rejects
+ * (for a panel-level post-process shader) but its surface rejects
  * direct MediaCodec hwdec output -- mpv's mediacodec vo fails with
  * "Failed to create HW uploader for format yuv420p" / "Could not
  * initialize video chain" against it, falls back to vo=gpu, and even that
  * renders nothing visible (black panel, audio still playing) -- confirmed
  * on-device. `VideoSurfacePanelRegistration` is what the official
  * `MediaPlayerSample` uses and is the direct-hwdec-output surface type.
- * Phase 2's shader post-process will need a different mechanism against
- * this registration type.
+ *
+ * The pseudo-3D shader therefore does not post-process this panel's
+ * surface at all: it runs inside the theater session's own mpv vo chain
+ * as a user shader (`glsl-shaders`), which is what makes the panel
+ * registration type irrelevant to it. See
+ * [Theater3DBridge.TheaterOpenRequest.shaderPath] and
+ * `TheaterMpvSession.openRequestedMedia`.
  *
  * Real per-eye stereo comes entirely from [StereoModeResolver]: mpv
  * decodes the source's already-combined SBS/OU frame untouched into this
