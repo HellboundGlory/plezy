@@ -6,7 +6,6 @@ import android.view.Surface
 import com.edde746.plezy.mpv.MpvPlayerCore
 import com.edde746.plezy.shared.PlayerDelegate
 import java.io.File
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -96,6 +95,11 @@ class TheaterMpvSession(
       playerCore.command(arrayOf("change-list", "http-header-fields", "append", "$key: $value"))
     }
 
+    // Stale live shaders from earlier sessions, before anything of ours is
+    // loaded in this fresh mpv instance -- deleting a file mpv has not read yet
+    // would turn the append below into a silent no-hook failure.
+    if (request.shaderPath != null) pruneLiveShaders()
+
     // The heuristic pseudo-3D shader, when this mode synthesizes depth at all
     // (null for real SBS/OU passthrough -- see
     // [Theater3DBridge.TheaterOpenRequest.shaderPath]). Appended before
@@ -182,13 +186,25 @@ class TheaterMpvSession(
    *
    * Strength lives in the shader's own source (a plain GLSL constant -- mpv's
    * parameter metadata is unavailable on the vo=gpu backend this session
-   * prefers), so changing it means rewriting that one literal and getting mpv
-   * to recompile. A sibling file is written rather than editing the one Dart
-   * materialized: that one is Dart's cache and is verified by byte comparison
-   * on the next launch, so clobbering it would only force a rewrite.
+   * prefers), so changing it means rewriting that literal and forcing mpv to
+   * recompile. Two things make that work, both learned the hard way on-device:
    *
-   * The clear-then-append pair is what actually triggers the recompile --
-   * re-appending the same path would be a no-op.
+   *  1. **Every strength gets its own file name.** mpv caches user shaders by
+   *     path forever (`load_cached_file`: it returns the body it first read for
+   *     an already-seen path and never re-reads it), so rewriting one fixed
+   *     path and re-appending it re-parsed the *original* source -- the change
+   *     silently did nothing. A distinct path per value guarantees a fresh
+   *     read.
+   *  2. **The write is atomic** (temp file then rename). A plain truncate-and-
+   *     write can be caught mid-flight by mpv's reader, and a truncated shader
+   *     fails to parse -- `parse_user_shader` abandons the whole file, no hook
+   *     registers, and the compositor raw-splits a flat frame, i.e. the
+   *     "overlapped" symptom. Worse, that damaged body then gets cached against
+   *     the path. Rename is atomic on the same filesystem, so no reader can
+   *     ever observe a partial file.
+   *
+   * Stale siblings are pruned at session start ([pruneLiveShaders]) rather than
+   * here, because deleting a file mpv has not read yet would fail the append.
    */
   override fun onStrengthChanged(strength: Double) {
     val playerCore = core ?: return
@@ -202,24 +218,50 @@ class TheaterMpvSession(
       Log.w(TAG, "Failed to read shader for strength=$strength", e)
       return
     }
-    val match = STRENGTH_PATTERN.find(source)
-    if (match == null) {
+    val value = Theater3DShaderBake.format(strength)
+    val rewritten = Theater3DShaderBake.rewriteStrength(source, strength)
+    if (rewritten == null) {
       Log.w(TAG, "Shader has no STRENGTH literal to rewrite; ignoring strength change")
       return
     }
-    val value = String.format(Locale.US, "%.2f", strength)
-    val rewritten = source.replaceRange(match.range, match.groupValues[1] + value + match.groupValues[3])
 
+    val live = File(template.parentFile, Theater3DShaderBake.liveShaderName(value))
+    val staged = File(template.parentFile, Theater3DShaderBake.liveShaderStagingName(value))
     val baked = try {
-      File(template.parentFile, LIVE_SHADER_NAME).apply { writeText(rewritten) }
+      staged.writeText(rewritten)
+      // Atomic swap: a reader either sees the old file or the complete new one.
+      if (!staged.renameTo(live)) {
+        staged.delete()
+        Log.w(TAG, "Could not publish live shader for strength=$strength")
+        return
+      }
+      live
     } catch (e: Exception) {
+      staged.delete()
       Log.w(TAG, "Failed to write live shader for strength=$strength", e)
       return
     }
 
-    Log.i(TAG, "Strength -> $strength (${baked.absolutePath})")
+    Log.i(TAG, "Strength -> $strength (${baked.name})")
+    // The clear-then-append pair is what triggers the recompile; re-appending
+    // an already-listed path alone would be skipped as a no-op.
     playerCore.command(arrayOf("change-list", "glsl-shaders", "clr", ""))
     playerCore.command(arrayOf("change-list", "glsl-shaders", "append", baked.absolutePath))
+  }
+
+  /**
+   * Removes live shaders from previous sessions. Called once per session,
+   * before any of ours is loaded, so nothing mpv is using can disappear.
+   */
+  private fun pruneLiveShaders() {
+    val templatePath = request.shaderPath ?: return
+    try {
+      val dir = File(templatePath).parentFile ?: return
+      dir.listFiles { f -> Theater3DShaderBake.isLiveShaderFile(f.name) }
+        ?.forEach { if (!it.delete()) Log.d(TAG, "Could not prune ${it.name}") }
+    } catch (e: Exception) {
+      Log.d(TAG, "Live shader prune skipped", e)
+    }
   }
 
   override fun transportSnapshot(): Theater3DBridge.TransportSnapshot =
@@ -281,19 +323,5 @@ class TheaterMpvSession(
 
   companion object {
     private const val TAG = "TheaterMpvSession"
-
-    /** Sibling of the materialized shader that live strength changes rewrite. */
-    private const val LIVE_SHADER_NAME = "Pseudo3DSbs_live.glsl"
-
-    /**
-     * Must match the literal `ShaderAssetLoader.materializePseudo3DShader`
-     * substitutes on the Dart side -- `assets/shaders/pseudo3d/Pseudo3DSbs.glsl`
-     * declares `const float STRENGTH = <value>;` for exactly this reason. Two
-     * implementations exist only because the live control cannot round-trip
-     * through Flutter; `shader_asset_loader_test.dart` pins the asset's shape
-     * and `TheaterMpvSessionTest` pins this pattern against it.
-     */
-    private val STRENGTH_PATTERN =
-      Regex("""(const\s+float\s+STRENGTH\s*=\s*)([0-9]*\.?[0-9]+)(\s*;)""")
   }
 }

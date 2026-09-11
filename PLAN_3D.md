@@ -398,14 +398,93 @@ New `lib/utils/stereo_source_detector.dart`:
 
 ---
 
-## Phase 3 — ML-based monocular depth (explicitly deferred)
+## Phase 3 — ML-based monocular depth (researched 2026-09-11, still deferred)
 
-Not scoped here. After Phase 1+2 ship and the heuristic shader's quality is
-validated against real usage, a follow-on plan should separately decide:
-model choice (Depth-Anything-V2-small class), on-device inference path
-(NNAPI vs. GPU delegate), frame-rate/resolution budget on XR2 Gen2, and
-temporal-stability strategy (naive per-frame inference will flicker without
-smoothing). Do not fold this into the v1 estimate — it is its own project.
+Phase 2 shipped a heuristic that reads local *texture*, not depth. Its ceiling
+is structural, not tuning: a colour gradient is not a depth gradient, which is
+why the artifact-prone `fwidth` term had to go and why what remains is stable
+but shallow. Real structure needs a model. Researched on 2026-09-11; the
+findings below are the scoping decision, not an estimate.
+
+### The model is the easy part
+
+| Candidate | Size | Notes |
+|---|---|---|
+| **Depth Anything V2 Small, quantized** | **19.2 MB** (`q4f16`, 256×256 in)<br>**27.3 MB** (`int8`/`uint8`, 256 or 512 in) | 24.8M params, **Apache-2.0**. Prebuilt, fused pre/post-processing ONNX models already exist and are proven on Android via ONNX Runtime (`shubham0204/Depth-Anything-Android`). **This is the pick.** |
+| Depth Anything V2 Small, fp16 | 49.8 MB | Unnecessary once a quantized build exists. |
+| Depth Anything V2 Small via ncnn/Vulkan | 50.6 MB | `FeiGeChuanShu/ncnn-android-depth_anything`. Its own README warns "most small models run slower on GPU than on CPU" on Android — do not assume Vulkan wins here. |
+| Depth Anything V2 Base / Large | 97.5M / 335.3M params | **CC-BY-NC-4.0** — non-commercial only. Disqualified for a shipped app, independent of size. |
+
+So: 19–27 MB, permissive licence, off-the-shelf Android path. Model selection
+is settled.
+
+### The blocker is the plumbing, and it is the whole project
+
+**A live per-frame depth map cannot be fed into an mpv user shader.** mpv's
+user-shader `TEXTURE` blocks are loaded from the shader file once, at parse
+time, as static bytes (`load_cached_file`); there is no API to update one per
+frame, and a shader parameter cannot carry a texture. The current theater path
+is exactly that mechanism — `glsl-shaders` on the session's own mpv instance —
+so model output has nowhere to go on it.
+
+That forces one of:
+
+1. **mpv's render API** (`mpv_render_context_create` with
+   `MPV_RENDER_API_TYPE_OPENGL`, then `mpv_render_context_render` into an FBO
+   we own). The headers are already shipped in this repo
+   (`android/libmpv/src/main/cpp/include/mpv/render_gl.h`) and **currently
+   unused** — `render.cpp` only attaches wid / the OSD surface
+   (`vo-mediacodec-osd-surface`). This is the architecturally right answer: we
+   take mpv's decoded frames into our own GL context, run our own depth-warp and
+   SBS pack, and are no longer limited by what a user shader can express. It
+   also retires the whole class of bugs fought in Phase 2 (vo selection, the
+   `PARAM` rejection, user-shader parse failures, the path-keyed shader cache).
+   Cost: it replaces the vo path, and with it the OSD/subtitle plane,
+   `VideoRectPolicy`'s geometry, the DV/HDR reshaping routing, and the
+   surface-rect layout — all of which the fork's `vo=mediacodec` currently owns.
+   **This is a Phase-1-scale change, not an increment.**
+2. A separate GL pipeline fed by its own decode path. Strictly worse — a second
+   decoder and no access to mpv's DV/HDR handling.
+
+### Realtime budget, stated honestly
+
+At 256×256, DA V2 Small should land in the tens of milliseconds on XR2 Gen2
+depending on delegate (NNAPI / GPU / XNNPACK), but that competes with decoding
+1080p and rendering two eyes for the same 33 ms frame at 30 fps. Realistic
+configuration: **infer at reduced resolution and a fraction of video framerate
+(~10–15 fps), then reuse the map across frames.** That means depth lags video by
+roughly 100 ms, which will visibly swim on fast pans — acceptable for
+dialogue/static shots, not for action. Any claim of full-rate model inference
+on this hardware should be treated as unverified until measured. Temporal
+smoothing (EMA/blend against the previous map) is mandatory, not optional —
+independent per-frame inference flickers.
+
+### "Better edges" has a specific, cheap answer
+
+The edge complaint is really about *depth* edges, and it is solvable
+independently of the model's resolution: **joint-bilateral upsampling** (Kopf
+et al.) — upsample the low-res depth map weighted by colour similarity to the
+full-res frame, so depth edges snap to object edges instead of being bilinearly
+smeared across them. This is what makes a 256×256 model acceptable at 1080p.
+
+Phase 2 already applies the same principle at 1080p on the heuristic: the depth
+field is combined with per-tap weights derived from colour similarity to the
+centre, so depth is averaged within a region and not across a boundary (see the
+`EDGE_K` term in `Pseudo3DSbs.glsl`, and the tests that pin the absence of any
+derivative-based term). That is the cheap version of the same idea — a joint
+bilateral over a 5-tap neighbourhood, using no extra texture fetches.
+
+### Recommended split, if Phase 3 is picked up
+
+- Land the render-API migration **first, on its own**, with the *existing*
+  heuristic depth. It is the risky part and it must not be entangled with a
+  model. It should be a no-visual-change refactor whose win is that depth
+  synthesis becomes expressible at all.
+- Then add the model behind a flag: 256×256 → depth map → joint-bilateral
+  upsample → warp. Keep the heuristic as the fallback for when inference cannot
+  keep up, and degrade resolution before framerate.
+
+Do not fold any of this into the v1 estimate.
 
 ---
 
@@ -1004,3 +1083,60 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
   - **Not yet verified**: that the perf and artifact fixes land as intended
     on the headset. Both are reasoned from the capture and from the shader
     maths; the device pass is the judge.
+
+- **2026-09-11 -- Depth slider fixed (mpv caches shaders by *path*); depth made
+  edge-aware; Phase 3 researched.** On-device the slider either did nothing or
+  re-broke rendering, and the two symptoms turned out to be one design error
+  plus its consequence.
+  - **Cause 1 — the slider appearing inert.** mpv caches user shaders **by
+    path**: `load_cached_file` (`video/out/gpu/video.c`) returns the body it
+    first read for a path it has already seen and never re-reads it. The
+    session rewrote one fixed file name and re-appended it, so from the second
+    change onward mpv re-parsed the *original* source. The control was wired
+    correctly and the logs prove it (`Strength -> <v>` fired once per change,
+    no shader errors) — the file was simply never re-read.
+  - **Cause 2 — the "overlapped" regression.** The rewrite was a plain
+    truncate-and-write. mpv's reader could catch the file mid-write, and a
+    truncated shader fails to parse: `parse_user_shader` abandons the whole
+    file, no hook registers, and the compositor raw-splits a flat frame — the
+    pre-fix symptom exactly. Worse, that damaged body was then cached against
+    the path, so it stayed broken for the session.
+  - **Fix**: one file name **per strength value**
+    (`Pseudo3DSbs_live_<value>.glsl`), so every change is a fresh path and a
+    fresh read; and the write is **atomic** (staging file + rename), so no
+    reader can ever observe a partial shader. Stale siblings are pruned once per
+    session, before anything of ours is loaded — deleting a file mpv has not yet
+    read would turn the append into a silent no-hook failure.
+  - **Restructured for testability**: the substitution and naming policy moved
+    out of the session into `Theater3DShaderBake` in `:theater3d`, which is
+    JVM-testable. The first attempt put a *copy* of the regex in a test, which
+    proves nothing; `Theater3DShaderBakeTest` (7 tests) now exercises the real
+    code, including that a rewrite touches only `STRENGTH` (a greedy pattern
+    would clobber `DETAIL_GAIN` and silently change the depth model) and that
+    every strength maps to a distinct path. `:app`'s test source set cannot see
+    `:theater3d` classes, which is why the policy lives in the library module.
+  - **Edges: the depth field is now joint-bilateral.** Each tap's depth is
+    weighted by *colour similarity to the centre* rather than by distance, so
+    samples across an object boundary are rejected and depth is averaged only
+    within a region. That is what keeps depth edges aligned with object edges
+    instead of smeared across them, while still smoothing interior noise — a box
+    blur does the opposite at exactly the boundaries that matter. Costs **no
+    extra texture fetches** (still 6): it reuses the five taps the blur already
+    needed. This is the cheap, single-pass form of the joint-bilateral
+    upsampling named in Phase 3 as the answer to edge quality.
+  - **Phase 3 researched and scoped** (see that section, now written up rather
+    than deferred-in-one-line). Model choice is settled — **Depth Anything V2
+    Small, quantized, 19–27 MB, Apache-2.0** (Base/Large are CC-BY-NC, so
+    disqualified regardless of size). The real blocker is that **a live depth
+    map cannot reach an mpv user shader at all**: `TEXTURE` blocks are static
+    bytes loaded once at parse. Model-based depth therefore requires moving to
+    **mpv's render API** — headers already shipped here
+    (`include/mpv/render_gl.h`) and currently unused — which replaces the vo
+    path and everything the fork's `vo=mediacodec` owns. Phase-1-scale, and
+    recommended to land on its own *before* any model is added.
+  - **Verified here**: 34 Dart tests, 12 Kotlin tests (`:theater3d`),
+    `:app:compileDebugKotlin` both configurations, shader re-validated against
+    the reimplemented mpv parser (parses clean, no stray marker, no derivative
+    builtins, 6 fetches). **Not verified**: that the slider now visibly changes
+    depth on the headset, and whether the colour-weighted depth looks better in
+    practice than the box-blurred version it replaces. Both need the device.
