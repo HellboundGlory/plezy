@@ -95,7 +95,11 @@ class TheaterMpvSession(
     playerCore.initialize { success ->
       if (ended.get()) return@initialize
       if (!success) {
-        failAndRelease("mpv init failed")
+        // Include what actually failed, not just that something did. A failed
+        // render-API setup reports only through this string on the Dart side
+        // (the log carries the stack), and "mpv init failed" alone cost a
+        // full on-device round trip to diagnose once already.
+        failAndRelease(playerCore.initFailure?.let { "mpv init failed: ${it.javaClass.simpleName}: ${it.message}" } ?: "mpv init failed")
         return@initialize
       }
       renderHost = playerCore.renderHost

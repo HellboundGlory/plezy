@@ -497,9 +497,17 @@ smeared across them. This is what makes a 256×256 model acceptable at 1080p.
 Phase 2 already applies the same principle at 1080p on the heuristic: the depth
 field is combined with per-tap weights derived from colour similarity to the
 centre, so depth is averaged within a region and not across a boundary (see the
-`EDGE_K` term in `Pseudo3DSbs.glsl`, and the tests that pin the absence of any
-derivative-based term). That is the cheap version of the same idea — a joint
-bilateral over a 5-tap neighbourhood, using no extra texture fetches.
+`EDGE_K` term in `Pseudo3DSbs.glsl` for the flat path and in
+`theater3d/Pseudo3DWarp.frag.glsl` for the theater's render-API pass).
+
+**Read this against §8.7 of the handoff before treating a model as the fix for
+the edge artifact.** Joint-bilateral upsampling is explicitly *edge-sharpening*:
+it snaps the depth field to object boundaries. A per-pixel horizontal warp of a
+sharp depth field folds over exactly where the field jumps, so a crisper depth
+map makes that artifact **worse**, not better — and it does so precisely on the
+high-contrast subjects where it is already reported. A model plus joint-bilateral
+upsampling still needs a disparity-gradient clamp (or proper forward-warp
+disocclusion fill) between the depth map and the sample offset.
 
 ### Recommended split, if Phase 3 is picked up
 
@@ -547,6 +555,7 @@ Do not fold any of this into the v1 estimate.
 3. **Auto-detect in v1 or v2.** Filename/aspect-ratio auto-detect (§2.4) is cheap and can ship in Phase 2; if you'd rather ship "Off/SBS/OU/Synthetic" as an explicit user choice first and add Auto later, that trims Phase 2 slightly.
 4. **Default strength value.** Plan defaults to `0.5`; this is a pure taste call best made after seeing the shader on real footage in Phase 2.
 5. **Theater-mode entry affordance beyond the button.** Should exiting theater mode (in-headset) be a dedicated in-scene button only, or also bound to the physical Oculus/Meta button long-press? Plan assumes in-scene button only for v1.
+6. **Depth polarity — the two pseudo-3D shaders disagree (2026-09-11).** `Pseudo3DSbs.glsl` (flat, shipping) inverts its structure cue, so it reads detail as *far*, contradicting its own comment and `Pseudo3DWarp.frag.glsl` (theater), and its ground prior may be inverted too. The comments agree that detail should read near and the ground near, so the theater shader matches the documented intent — but the flat path is the one users have actually seen, so "which is right" is a product call, not a code call. One character either way. Evidence: `HANDOFF_RENDER_API.md` §8.8.
 
 ---
 
@@ -1262,3 +1271,43 @@ Do not fold any of this into the v1 estimate.
   - **Unchanged and still open**: on-device confirmation that the depth slider
     visibly works and that the joint-bilateral depth looks better than the
     box-blurred version.
+
+- **2026-09-11 -- Render-API migration runs on-device; one blocker fixed, one
+  visual defect characterized.** Still no production code in this entry — but
+  the theater path is now live on a Quest 3, so the open questions above have
+  real answers. `HANDOFF_RENDER_API.md` §8.5–§8.8 is the record.
+  - **The pipeline works.** `egl 1.5 ready: 1920x1080, GL_RENDERER=Adreno (TM)
+    740`, `Render thread started`, `First frame rendered`, then 300/600/900
+    frames at ~24 fps. `hwdec-current=mediacodec`, so the zero-copy
+    `aimagereader` path is real and §8.2(2)'s cost claim holds. The panel
+    Surface is an ordinary EGL native window, so the panel registration type
+    needs no revisiting. The 24 fps cadence is the *correct* shape — one render
+    per decoded frame, not per refresh — which retires the cadence half of
+    open question 5.
+  - **Unpausing was a silent no-op, and it was inherited architecture.**
+    `hasReadyVideoOutput()` required an *attached Surface*, which a render-API
+    core never has (it hands mpv no `wid`, and the only code that sets
+    `hasAttachedSurface` returns early under `renderApi`). Every unpause took
+    the "defer until the output is ready" branch: it set a flag, wrote nothing
+    to mpv, and **reported success**. Nothing could clear the flag, so playback
+    stayed paused forever. Pause worked, resume did not, because only the resume
+    direction consults the gate. `MpvPlayerCore.hasReadyVideoOutput()` now has a
+    render-API term (`renderApi && renderHost != null`), and
+    `applySurfaceSizeInternal` gained an explicit `renderApi` guard because the
+    gate it relied on no longer blocks that path.
+  - **The edge artifact is the heuristic's, and Phase 3 would not fix it by
+    itself.** Confirmed on-device and characterized in handoff §8.7: `depth`
+    comes from a *contrast/texture* measure, so it jumps at silhouettes; the
+    sample coordinate `x + d(x)` then stops being monotonic and the warp folds
+    over, worst on high-contrast detailed subjects — people. Ranked fixes are in
+    §8.7, cheapest first, with a disparity-gradient clamp at the head. See the
+    note added to "Better edges" above: joint-bilateral upsampling sharpens
+    depth edges, so it makes this *worse*, and a model alone is not the answer.
+  - **A cross-path inconsistency found while diffing the two shaders (handoff
+    §8.8).** `Pseudo3DSbs.glsl` (flat, shipping) and `Pseudo3DWarp.frag.glsl`
+    (theater) implement the same heuristic, but the flat one's `1.0 -` inverts
+    its structure cue, so it reads detail as *far* — contradicting its own
+    comment and the theater shader. Its ground prior may be inverted as well,
+    depending on a coordinate claim that needs the device to settle. Not fixed:
+    the flat path has shipped and changing it changes what users see. Needs one
+    deliberate polarity decision.

@@ -42,7 +42,7 @@ class MpvRenderHost private constructor(
    */
   fun setStrength(strength: Double, synthetic: Boolean) {
     if (closed) return
-    val result = MpvPlayer.nativeRenderSetStrength(player.session, strength.toFloat(), synthetic)
+    val result = MpvPlayer.renderHostSetStrength(player.session, strength.toFloat(), synthetic)
     if (result < 0) {
       android.util.Log.w(TAG, "setStrength($strength, $synthetic) rejected: error $result")
     }
@@ -57,7 +57,7 @@ class MpvRenderHost private constructor(
     // Deliberately not session-checked natively: this must still reclaim a host
     // belonging to a session that has since been retired, or a successor's
     // create() would collide with it.
-    MpvPlayer.nativeRenderDestroy(player.session)
+    MpvPlayer.renderHostDestroy(player.session)
   }
 
   companion object {
@@ -92,7 +92,7 @@ class MpvRenderHost private constructor(
           android.util.Log.w(TAG, "Replacing the render host left over from a previous session")
           it.close()
         }
-        val result = MpvPlayer.nativeRenderCreate(player.session, surface, vertexShader, fragmentShader)
+        val result = MpvPlayer.renderHostCreate(player.session, surface, vertexShader, fragmentShader)
         if (result < 0) {
           throw MpvException("Failed to create the mpv render host: error $result")
         }

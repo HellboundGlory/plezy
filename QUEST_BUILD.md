@@ -776,13 +776,28 @@ Design, evidence and the remaining on-device questions are in
 **Verified on-device**: real frame-packed SBS masters display correctly in
 `sbs` and `auto` (confirmed on a Quest 3 by eye, 2026-09-11), as do `ou`
 and the panel/controls rendering and clean exit→resume handback — *on the
-pre-migration `vo` path*. **Not yet verified on-device at all**: the
-render-API path itself. The shader's geometry and disparity are verified
-against a real GLES driver off-device, but whether the Spatial panel's
-`Surface` accepts an EGL window surface, whether `hwdec=mediacodec` reaches
-GL on Adreno, and how the picture is oriented and how it performs
-thermally are all open. See `HANDOFF_RENDER_API.md` §8.5 for the ordered
-list and what each symptom would mean.
+pre-migration `vo` path*.
+
+**The render-API path itself is now verified live** (Quest 3, 2026-09-11):
+the panel's `Surface` does accept an EGL window surface (1920×1080,
+`GL_RENDERER=Adreno (TM) 740`, GLES 3.2), `hwdec-current=mediacodec` means
+the zero-copy `aimagereader` interop is real, the picture is correctly
+oriented, and the loop renders once per decoded frame (~24 fps) rather
+than once per refresh. `HANDOFF_RENDER_API.md` §8.5 is the evidence.
+
+Two things carry caveats rather than being closed:
+
+- **One blocking bug was found and fixed** — every unpause was a silent
+  no-op, because the readiness gate that guards resuming required a
+  Surface a render-API core never has, and the "wait for the output" branch
+  reports success while writing nothing. Handoff §8.6.
+- **One visual defect remains**: minor artifacting along the edges of
+  high-contrast subjects (most visible on people), inherent to the
+  heuristic depth field rather than to the render plumbing, with ranked
+  candidate fixes in handoff §8.7. Separately, the flat path's
+  `Pseudo3DSbs.glsl` and the theater's `Pseudo3DWarp.frag.glsl` disagree
+  about depth polarity — handoff §8.8 — which needs one deliberate
+  decision before the artifact work is judged against a reference.
 
 ## Known considerations
 

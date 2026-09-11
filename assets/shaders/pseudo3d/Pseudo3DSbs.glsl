@@ -66,7 +66,14 @@ vec4 hook() {
 
     // Structure cue, per tap: how much local detail this region carries
     // (textured and/or high-contrast reads "near", flat haze/sky/walls read
-    // "far"). A high-pass magnitude against the *blurred* field, NOT a
+    // "far").
+    //
+    // WARNING: the `1.0 -` below inverts that, so as written this makes detail
+    // read FAR -- the opposite of the sentence above, and the opposite of the
+    // theater's Pseudo3DWarp.frag.glsl, which implements the sentence. The two
+    // paths therefore disagree about depth polarity. Not fixed here because
+    // this shader has shipped and changing it changes what users see; see
+    // HANDOFF_RENDER_API.md §8.8 for the evidence and the one-line resolution. A high-pass magnitude against the *blurred* field, NOT a
     // per-pixel derivative -- that distinction is the whole point. An earlier
     // revision used fwidth() of the sampled colour, which peaks precisely
     // along object silhouettes, so depth jumped at every edge and each eye

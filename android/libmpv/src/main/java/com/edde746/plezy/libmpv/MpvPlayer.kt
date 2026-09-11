@@ -215,14 +215,30 @@ class MpvPlayer private constructor(
     // Render API (render_gl.cpp). Unlike every entry above, these are called
     // from :app's theater path through MpvRenderHost, and the Surface they take
     // is the compositor's own rather than a SurfaceView's.
+    //
+    // `private`, like every declaration above, and reached through the
+    // wrappers below rather than declared `internal` directly. Kotlin mangles
+    // an `internal` member's *JVM* name by appending the module name, so an
+    // `internal external fun nativeRenderCreate` looks for
+    // `Java_..._nativeRenderCreate_00024android_1libmpv_1debug` at runtime and
+    // throws UnsatisfiedLinkError -- confirmed on-device. `private` and
+    // `public` are not mangled.
 
     /** 0 on success, else a negative mpv error; nothing is left created on failure. */
-    @JvmStatic internal external fun nativeRenderCreate(session: Long, surface: Surface, vertexShader: String, fragmentShader: String): Int
+    @JvmStatic private external fun nativeRenderCreate(session: Long, surface: Surface, vertexShader: String, fragmentShader: String): Int
 
     /** Frees the render context and its EGL/GL state. Safe to call with none live. */
-    @JvmStatic internal external fun nativeRenderDestroy(session: Long)
+    @JvmStatic private external fun nativeRenderDestroy(session: Long)
 
-    @JvmStatic internal external fun nativeRenderSetStrength(session: Long, strength: Float, synthetic: Boolean): Int
+    @JvmStatic private external fun nativeRenderSetStrength(session: Long, strength: Float, synthetic: Boolean): Int
+
+    internal fun renderHostCreate(session: Long, surface: Surface, vertexShader: String, fragmentShader: String): Int =
+      nativeRenderCreate(session, surface, vertexShader, fragmentShader)
+
+    internal fun renderHostDestroy(session: Long) = nativeRenderDestroy(session)
+
+    internal fun renderHostSetStrength(session: Long, strength: Float, synthetic: Boolean): Int =
+      nativeRenderSetStrength(session, strength, synthetic)
 
     internal fun setOptionString(session: Long, name: String, value: String): Int = nativeSetOptionString(session, name, value)
 

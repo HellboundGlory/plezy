@@ -74,8 +74,20 @@ float groundPrior(float y) {
 // That distinction is the whole point: an earlier revision used fwidth() of
 // the sampled colour, which peaks exactly along object silhouettes, so depth
 // jumped at every edge and each eye sampled a different distance across it --
-// a doubled outline that shimmered with the video. A wide blur is continuous
-// by construction, so the field it produces has no edge response.
+// a doubled outline that shimmered with the video.
+//
+// Do not over-read this: it is *smoother* than a per-pixel derivative, not
+// edge-free. `lumaMean` is a wide blur and continuous by construction, but the
+// cue is `abs(luma(tap) - lumaMean)`, which still responds strongly at a
+// silhouette -- and this is a contrast/texture measure, not a depth estimate.
+// The measured consequence is the edge artifact reported on-device: depth (and
+// so the sample offset) changes across a couple of texels, `srcUv.x + offset`
+// stops being monotonic, and the warp folds over along silhouettes. Worst on
+// high-contrast, detailed subjects -- people. See HANDOFF_RENDER_API.md §8.7
+// for the mechanism and the ranked fixes (gradient clamp first).
+//
+// Backgrounds read far because they are flat; that is the same statement as
+// "detail reads near", and both are the heuristic's whole content.
 float structureCue(vec3 tap, float lumaMean) {
   return clamp(abs(lumaOf(tap) - lumaMean) * DETAIL_GAIN, 0.0, 1.0);
 }

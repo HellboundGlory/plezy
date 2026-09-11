@@ -3,8 +3,10 @@
 **Status: SHIPPED 2026-09-11. Theater path only; the flat player stays on `vo`.**
 
 Sections 0–2 are the original plan, kept because the reasoning still explains
-the code. **§8 records what was actually built, what differed, and what is
-still unverified on-device — read that first.**
+the code. **§8 records what was actually built and what differed, §8.5 what the
+first on-device run settled, §8.6–§8.8 the three defects it exposed, and §9 the
+state at handoff plus what to do first — read §8.5 onward before touching
+anything.**
 
 Goal: replace the theater session's `vo`-based rendering with mpv's **render
 API** (`mpv_render_context`), so that video frames arrive in a GL context *we*
@@ -82,6 +84,11 @@ that is what was asked for.
 
 ## 1. Current architecture — what owns what today
 
+> **Snapshot of the pre-migration state**, written before any code. Kept because
+> it is the inventory the migration was measured against, and because it names
+> what the flat path still owns. Where it says something does not exist, read
+> "did not exist *then*" — §8 is what exists now.
+
 Everything below is what the migration has to replace or re-home. File paths are
 from the repo root.
 
@@ -133,6 +140,10 @@ is not affected** — do not let this migration touch it.
 **There is no render-API JNI whatsoever.** `mpv_render_context` appears only in
 the shipped headers (`include/mpv/render.h`, `render_gl.h`) — grep-verified
 across `android/**`.
+
+*(As of §8 this is no longer true: `render_gl.cpp` implements it. The
+observation above is what justified treating the migration as new work rather
+than a switch, which is why it is left standing.)*
 
 ---
 
@@ -347,6 +358,13 @@ Reusable techniques from Phases 0–2; all of them earned their place.
   it produced a real regression slope. Reuse it to *quantify* the warp rather
   than eyeball it: with the render API we control disparity directly, so
   measure the realised offset against the intended one.
+  **But establish the layout before trusting a number from it** — see §8.7: on
+  a real theater capture the halves did not correlate at all under a 2-D search,
+  so the split-into-halves assumption was not valid for that frame. Locate the
+  panel quad first (e.g. from the saturation field, since video content is far
+  more saturated than passthrough), and only then split. Also confirm the
+  capture is not what a `screencap` cannot faithfully represent — an in-scene
+  panel is composited, not a framebuffer readback.
 - **Sustained logcat capture** via `hub start` into a file, with a recorded line
   baseline before each test, so a test session can be diffed out afterwards.
   Enlarge the ring buffer first (`adb logcat -G 16M`) — at 256 KB the compositor
@@ -394,9 +412,10 @@ visible.
    through `gl_video` as usual, but do not expect HDR to be preserved as such
    until the target format is revisited.
 5. **Thermals.** A per-frame GLES pass per eye at 1920×1080 on XR2 Gen2 is not
-   free. Now measurable rather than hypothetical: `render_gl.cpp` logs a frame
-   count every 300 frames, so the render loop's liveness (and, with a Perfetto
-   or simpleperf trace, its cost) can be read off the device directly.
+   free. Now measured for liveness and *shape* (§8.5.4): the loop renders once
+   per decoded frame (~24 fps on real content), not once per refresh, so the
+   cost is bounded by the source. Per-frame cost under a Perfetto or simpleperf
+   trace is still unmeasured, as is behaviour on a high-frame-rate source.
 6. **Where depth inference runs.** Unchanged and unblocked: the depth texture
    now has an obvious home in the pass (a second sampler in
    `Pseudo3DWarp.frag.glsl`), but nothing infers yet. Same GPU as compositing ⇒
@@ -406,6 +425,12 @@ visible.
    subtitle rendering in the theater session. Now merely a feature to add —
    `blend-subtitles` renders into the frame mpv hands us, which is exactly the
    frame this pass already receives.
+8. **How bad is the edge artifact, and which fix removes it** (§8.7). It is the
+   only *visual* defect left in the synthetic path, it is a property of the
+   heuristic depth field rather than of the render plumbing, and it has not been
+   seen by anyone with the screenshots in hand. Ranked candidate fixes are in
+   §8.7; the cheapest (a disparity-gradient clamp) is also the one with the most
+   predictable effect.
 
 ---
 
@@ -507,6 +532,35 @@ input under the identity mapping (which also pins the orientation contract
 between `FLIP_Y` in `render_gl.cpp` and the vertex stage), both eyes must agree
 on depth, and the shift must be inward and linear in strength.
 
+### 8.3b Failures only the device could produce (1 and 2 of 3)
+
+Both were found on the first on-device run of this migration (2026-09-11,
+Quest 3) and both are worth carrying forward. The third is §8.6.
+
+- **Kotlin mangles an `internal` member's *JVM* name.** The three render-API
+  natives were declared `@JvmStatic internal external fun nativeRenderCreate`,
+  and the runtime looked for
+  `Java_..._MpvPlayer_nativeRenderCreate_00024android_1libmpv_1debug` — the
+  module-name suffix appended to internal members — while `render_gl.cpp`
+  exports the plain `Java_..._MpvPlayer_nativeRenderCreate`. Result:
+  `UnsatisfiedLinkError`. Every other declaration in that companion is
+  `private`, which is why the existing JNI surface never hit it. They are
+  `private` now, with plain `internal` forwarders to them (`renderHostCreate`,
+  …) for callers in `:app`. Verified by `javap` on the compiled class rather
+  than by inference.
+- **`catch (e: Exception)` does not catch a failed `external` call.**
+  `UnsatisfiedLinkError` is an `Error`, so `initialize`'s handler missed it and
+  it escaped a coroutine on `Dispatchers.Main` and killed the process, taking
+  `MainActivity` with it — instead of failing the one theater session, which is
+  what `onResult(false)` exists for. The handler is now `Throwable` with the
+  reason spelled out. This class of miss is not specific to the render API:
+  any future EGL/`System.loadLibrary` failure fails the same way.
+- Related, and fixed with them: `initialize` failing reported only the string
+  `"mpv init failed"` to Dart, discarding why. `MpvPlayerCore.initFailure` now
+  carries the `Throwable`, and the session folds its type and message into the
+  reason the user's snackbar shows — the first on-device run could only be
+  diagnosed from logcat because of that gap.
+
 ### 8.4 Verification actually run
 
 | Gate | Result |
@@ -520,31 +574,319 @@ on depth, and the shift must be inward and linear in strength.
 | `:libmpv:externalNativeBuildDebug` | pass; `libplayer.so` exports the three JNI entries and links `libEGL`/`libGLESv3`/`libm`/`libandroid` |
 | `THEATER_MODE=1 flutter build apk --debug` | pass; APK contains both shader assets and `nativeRender*` in `libplayer.so` |
 | Full `flutter test` suite | 7128 pass |
+| §8.6 fix: `:app:compileDebugKotlin :libmpv:externalNativeBuildDebug` (`THEATER_MODE=1`) | pass |
+| §8.6 fix: `THEATER_MODE=1 flutter build apk --debug` | pass; `adb install -r` Success on the Quest 3 |
 
-### 8.5 Not verified — the on-device list
+### 8.5 First on-device run — what it settled
 
-Nothing here has run on a Quest. In rough diagnosis order:
+Run 1 and run 2 on a Quest 3 (`eureka`, 2026-09-11). The pipeline came up:
 
-1. **Does the panel Surface accept an EGL window surface at all** — and does
-   `WIDTH`/`HEIGHT` report 1920×1080 as the panel was configured? Logged as
-   `MpvRenderGl: egl x.y ready: WxH, GL_RENDERER=...`; a failure here means the
-   Spatial SDK's Surface is not a usable EGL native window and the panel
-   registration type has to be revisited.
-2. **Does `hwdec=mediacodec` reach GL** through `aimagereader`? `hwdec-current`
-   is still logged, and the interop driver's own `MP_VERBOSE` lines would name
-   the attempted driver. Falling back to `mediacodec-copy` is the diagnosis, not
-   a fix.
-3. **Orientation.** The `FLIP_Y` ↔ vertex-stage pair is *verified* consistent
-   against a driver, but the remaining unknown is whether the Spatial
-   compositor's Surface is stored bottom-up like a normal EGL window surface.
-   A vertically flipped picture means flipping the `vUv` mapping in the vertex
-   stage — one line, and the comment there says not to do it without changing
-   `FLIP_Y` too.
-3b. **Aspect.** `keepaspect` is now set from `setRenderSurface`'s `letterbox`
-   (theater: `false`). If `sbs` mode looks squashed or has black bars, that flag
-   is where to look — and note it is read at option-setting time, i.e. inside
-   `initialize()`, so it cannot be changed after a session starts.
-4. **Thermals and cadence.** `gl_video`'s per-frame cost at 1920×1080 is now
-   the app's, plus our one pass.
-5. **HDR.** See §7.4: the FBO is 8-bit, so HDR is being tone-mapped and
-   truncated. Correct-looking, not preserved.
+```
+MpvRenderGl: egl 1.5 ready: 1920x1080, GL_RENDERER=Adreno (TM) 740, GL_VERSION=OpenGL ES 3.2
+MpvRenderGl: Render thread started
+MpvRenderGl: First frame rendered
+TheaterMpvSession: Render pipeline ready: 1920x1080, synthetic=true, strength=0.5
+TheaterMpvSession: hwdec-current=mediacodec
+MpvRenderGl: 300 frames rendered / 600 / 900
+```
+
+Settled, in the order §8.5 used to ask them:
+
+1. ~~**Does the panel Surface accept an EGL window surface**~~ **Yes.** An
+   `EGLSurface` was created from it, `eglMakeCurrent` succeeded on the GL
+   thread, and `WIDTH`/`HEIGHT` report 1920×1080 — the panel's configured size.
+   The Spatial SDK's Surface is an ordinary EGL native window. Registration
+   type does not need revisiting.
+2. ~~**Does `hwdec=mediacodec` reach GL**~~ **Yes.** `hwdec-current=mediacodec`,
+   so the `aimagereader` interop is live and the frame never round-trips through
+   system memory. §8.2(2)'s reading of `hwdec_aimagereader.c` holds in practice;
+   no downgrade to `mediacodec-copy` is needed.
+3. **Orientation** — the picture is the right way up, and §8.3's `FLIP_Y` ↔
+   vertex-stage contract therefore also holds for the Spatial compositor's
+   Surface. This is *observation*, not the driver-level measurement §8.3 has;
+   treat it as good evidence rather than a proof.
+3b. **Aspect** — no black bars and no obvious horizontal squash reported in
+   `sbs` mode, which is what the `keepaspect=no` decision predicted. Not
+   separately confirmed with a known-aspect test pattern.
+4. **Cadence** — `300/600/900 frames rendered` at ~12.5 s intervals is ~24 fps,
+   i.e. one render per *video* frame, not one per display refresh. That is the
+   correct shape: mpv signals a redraw when a new frame exists and the panel
+   holds the result in between, so a 24 fps source costs 24 passes per second,
+   not 90. §7.5's "is mpv's own cadence good enough" is answered *for
+   steady-state playback*; it says nothing about cost under HDR/10-bit or about
+   a high-frame-rate source.
+5. **HDR.** Still open (§7.4) and unchanged: the FBO is 8-bit, so HDR is
+   tone-mapped and truncated. Correct-looking, not preserved.
+
+### 8.6 Third device-only failure: unpausing was a silent no-op
+
+**Symptom.** Theater playback works. Press pause — it pauses. Press play — it
+never resumes, and nothing else brings it back. The in-scene controls are
+otherwise fine: logcat shows `MpvPlayerCore: Public pause state updated:
+paused=true`, so the tap did reach mpv.
+
+**Cause.** `MpvPlayerCore.setProperty("pause", "no")` is gated on
+`hasReadyVideoOutput()`:
+
+```kotlin
+if (paused == false && pauseIntent != null && !hasReadyVideoOutput()) {
+  // ... deferredResumeRequested = true
+  // ... onComplete(Result.success(Unit))   <- reports success
+  return                                    // <- never writes pause=no
+}
+```
+
+and `hasReadyVideoOutput()` required `hasAttachedRealSurface()`, which is
+`hasAttachedSurface && ...`. A render-API core **never attaches a Surface**: it
+hands mpv no `wid` at all, and `refreshVideoOutput` — the only thing that ever
+sets `hasAttachedSurface = true` — returns early when `renderApi` is set. So the
+predicate was permanently false for the theater core, and every resume fell into
+the "wait for the output" branch.
+
+The deferral is not a queue. It sets `deferredResumeRequested = true` and leaves
+it there; the only thing that consumes the flag is
+`applyDeferredResumeIfNeeded`, called from `handoffDestroyedSurface`'s
+success path — which cannot run without an attached Surface. So the request was
+accepted, reported as success, and dropped forever.
+
+Only the unpause direction consults the gate, which is exactly the split the
+user saw: pause worked, resume did not. The same gate sits in
+`requestAutoResume`, so regaining audio focus would also have failed to resume
+the theater core.
+
+**Fix.** `hasReadyVideoOutput()` now carries a render-API term:
+
+```kotlin
+audioOnly || renderApiReady || (videoOutputFailure == null && hasAttachedRealSurface() && !videoOutputRestoring)
+
+private val renderApiReady get() = renderApi && renderHost != null && videoOutputFailure == null
+```
+
+The render host *is* the video output for such a core, so "ready" means the host
+exists. Follow-on: with the gate no longer blocking them, the surface-size paths
+below it became reachable for a render-API core, so `applySurfaceSizeInternal`
+gained an explicit `if (renderApi) return` — `android-surface-size` describes a
+`vo=android` Surface that a render-API core never hands mpv. It is not reachable
+today (the theater core is `headless`, so no SurfaceView exists to report a
+size); it is written as an invariant rather than left to that coincidence.
+
+**The transferable lesson.** When the output model changes, every predicate that
+*encodes* the old model has to be re-derived rather than inherited — and a
+readiness gate is the worst place to inherit one, because its failure mode is
+not an error but a silent no-op that reports success. A "$1 = true, nobody
+clears it" deferral flag with no timeout and a single consumer on an unreachable
+path is a silent-failure generator; if a second one is ever added, give it an
+owner that can and must clear it.
+
+### 8.7 Known visual defect: edge artifacts on high-contrast subjects
+
+Reported on-device after the render path came up: "minor artifacting on edges",
+most visible on people. It is a property of the heuristic depth field, not of
+the render-API plumbing, and no screenshot has been read by eye yet (see below).
+
+**Why that signature is expected from the shader.** The depth is
+
+```
+depth = mix(groundPrior(y), structureCue, 0.6)
+structureCue = clamp(abs(luma(tap) - lumaMean) * 3.0, 0.0, 1.0)
+```
+
+`structureCue` is a **contrast/texture** measure, not a depth estimate: it peaks
+wherever a pixel differs from its wide local mean. That is strongest on
+high-contrast, detailed subjects against contrasting backgrounds — people,
+faces, hair, dark clothing — which is exactly where the artifact is reported.
+
+The warp then samples at `srcUv.x ± shift(depth)`. Where `depth` changes sharply
+across a couple of texels, so does `shift`, and the sample coordinate
+`x + d(x)` stops being monotonic: two output pixels fetch the same source pixel
+while a sliver of source is never fetched. That is a **fold-over**, and it looks
+like a stretched or streaked band hugging the silhouette with a hard tear at the
+fold. The magnitude is `MAX_DISPARITY = 0.02` of the frame, so at strength 0.5
+it is ±0.01 frame ≈ ±9.6 px in a 960-wide half — the artifact is driven by the
+disparity's *gradient*, not its size.
+
+A second contributor is that the joint-bilateral weights are colour-similarity
+based at `±BLUR_RADIUS` (±0.02 frame ≈ ±38 px), which makes the depth transition
+happen over 1–2 px rather than a ramp: the field has genuinely discontinuous
+edges. Note that `Pseudo3DWarp.frag.glsl`'s own comment on `structureCue` claims
+"a wide blur is continuous by construction, so the field it produces has no edge
+response" — that is true of the *mean* (`lumaMean`) but **not** of the *cue*
+built from it, which is `abs(luma(tap) - lumaMean)` and therefore still responds
+strongly at silhouettes. The comment has been corrected in place rather than
+left to mislead the next reader into dismissing this artifact as impossible.
+
+**Why comparing left to right eye is the right diagnostic.** The two halves of
+the packed pair differ only in the *sign* of the offset, so away from edges they
+are pure translations of one another: the residual between them concentrates
+precisely on the discontinuities, one eye folding inward while the other folds
+outward. A diff of the two halves therefore isolates the defect far better than
+looking at either alone.
+
+**Candidate fixes, cheapest first** (none applied — nothing here is verified):
+
+1. **Clamp the disparity gradient** so the mapping stays monotonic: evaluate
+   `shift` at `srcUv` and at a neighbouring texel and limit the difference to
+   ≲1 px per pixel. Removes the tearing; leaves the halo. One or two extra taps.
+2. **Smooth the depth field rather than the colour** — widen the window the cue
+   is measured against, or low-pass the computed `depth` with an edge-aware
+   filter — so gradients are gentle. Attacks the cause; costs taps.
+3. **Retune `DETAIL_GAIN` (3.0) / `DETAIL_MIX` (0.6)** so `groundPrior`
+   dominates. Cheap, but it trades away the 3D pop, which is most of the effect.
+4. **Real depth inference** (§7.6) supersedes all of the above, which is the
+   point of the migration.
+
+**Screenshots captured for the next session** (vision was unavailable in the
+session that took them — the `?q=` image route resolved to an unprovisioned
+model — so none of these has been read by eye):
+
+| File | What it is |
+|---|---|
+| `/tmp/quest_shots/theater_shot.png` | `screencap` at 22:15, 4128×2208 |
+| `/tmp/quest_shots/theater_shot2.png` | `screencap` at 22:18, 4128×2208 |
+| `/tmp/quest_shots/v_overview.png` | 640×342 overview of `theater_shot2` |
+| `/tmp/quest_shots/v_seam.png` | native-res crop at the centre (x 1900–2500) |
+| `/tmp/quest_shots/v_detail.png` | native-res crop of a scene-detail region |
+| `/tmp/quest_shots/shot_eye.png` | left half of `theater_shot.png` (brightest-edge crop) |
+
+**Unresolved geometry question, to settle by eye first.** Measurements taken
+mechanically on `theater_shot2.png` (no vision available):
+
+- Content sits in two bright regions with a dark band at x ≈ 1935–2193, i.e.
+  centred on 2064 = W/2.
+- Left region x 10–2052, y 208–2056 (2043×1849); right region x 2071–3934,
+  y 118–1924 (1864×1807) — different sizes *and* different vertical extents.
+- Minimum SAD between the two regions over a 2-D search: 46.8 at (dx=22, dy=0),
+  versus 49.2 at zero offset — i.e. effectively uncorrelated, where a genuine
+  two-view-of-one-panel stereo pair should correlate strongly.
+
+So the capture is either **not** what the §6 technique assumes (two views of one
+panel), or the region extraction above is picking the wrong quads — most likely
+the latter, since the different vertical extents suggest a tilted panel whose
+projection is a trapezoid. Resolve this by eye before trusting any measurement
+derived from these captures, including the §6 "split into eye halves" recipe.
+
+**A frozen picture may have preceded the pause.** In run 2, mpv logged an I/O
+error and a reconnect at 21:12:44:
+
+```
+[ffmpeg] tcp: ffurl_read returned 0xdfb9b0bb
+[ffmpeg] https: Will reconnect at 694632540 in 0 second(s), error=I/O error.
+```
+
+and the frame count stopped at 900 (21:12:49) — roughly 30 s *before* the pause
+tap at 21:13:19. The unpause bug in §8.6 is proven from the code and explains
+"pause does nothing afterwards", but it does not explain a picture that had
+already stopped ~30 s earlier. Whether mpv recovered from that reconnect and
+kept rendering is **not** established: worth checking on the next run, with
+audio as the tell (audio continuing while the frame count is flat would point at
+the render path rather than the network).
+
+### 8.8 The two pseudo-3D shaders disagree about depth polarity
+
+Found by diffing the heuristic when diagnosing §8.7. **Not fixed — the flat path
+is out of scope for this migration, and changing it changes what shipping users
+see.** Recorded because it is cheap to state and expensive to rediscover.
+
+There are two shaders implementing the same 5-tap joint-bilateral heuristic with
+the same constants (`DETAIL_GAIN = 3.0`, `DETAIL_MIX = 0.6`, `BLUR_RADIUS = 0.02`,
+`EDGE_K = 12.0`, disparity `0.02`):
+
+- `assets/shaders/pseudo3d/Pseudo3DSbs.glsl` — the flat player's mpv *user*
+  shader (Phase 2, shipping).
+- `assets/shaders/theater3d/Pseudo3DWarp.frag.glsl` — the theater's GL pass
+  (§8.1).
+
+Both carry a comment saying the structure cue means *textured / high-contrast
+reads **near**, flat haze / sky / bare walls read **far***:
+
+| | The code | Matches its comment? |
+|---|---|---|
+| Theater | `mix(groundPrior(y), structureCue, 0.6)`, `structureCue = clamp(abs(luma(tap) - lumaMean) * 3.0, 0, 1)` | **yes** — detail raises `depth`, and `depth = 1` is near |
+| Flat | `mix(1.0 - y, 1.0 - clamp(abs(luma(tap) - lumaMean) * 3.0, 0, 1), 0.6)` | **no** — the `1.0 -` inverts it, so detail *lowers* `depth`, i.e. reads far |
+
+So the flat shader's cue term is the negation of the theater's, and it is the
+flat one that contradicts its own documented intent. This is airtight because it
+does not depend on any coordinate convention: both comments assert the same
+polarity, and only one body implements it.
+
+**The ground prior is a separate, softer question** and does depend on the
+convention. The theater shader documents `vUv.y = 0` as the image's **bottom**,
+which makes `groundPrior(y) = 1 - y` read the ground as near. The flat shader's
+comment asserts the opposite about its own coordinate — "`HOOKED_pos.y` is 0 at
+the image's **top**" — while reusing the same `1.0 - uv.y` shape. If that claim
+is right, the flat shader's ground prior is inverted too, and its whole depth
+field is `1 - depth` relative to the theater's, which would mean the two paths
+show near and far *transposed*. If the claim is wrong, only the cue term is
+inverted. Resolving it needs the device: flip the sign of one term and see which
+way round the flat player reads.
+
+**Why it matters beyond tidiness.** The two paths are meant to be the same
+effect; a user comparing them is comparing a transposed depth field, not two
+tunings of one. §8.7's artifact sits at the same silhouettes either way, but the
+direction of the fold follows the sign — so pin the polarity before ranking
+artefact fixes, or the "improvement" may be judged against the wrong reference.
+
+**Suggested resolution once someone can see it:** decide the intended polarity
+once (the comments say detail-near, ground-near, so the theater shader is the
+one that matches the documented intent), then make the flat shader agree — a
+one-character edit to the cue term, plus the ground term if the coordinate claim
+turns out to be wrong. Do not do it blind: the flat player has shipped.
+
+---
+
+## 9. State at handoff, and what to do first
+
+Branch `quest`; the commit that lands this section is the tip. Everything below
+refers to a Quest 3 (`eureka`, `2G0YC5ZG4R000Z`) over wireless adb, app
+`com.edde746.plezy`.
+
+**Installed on the device**: a `THEATER_MODE=1 QUEST=1 --debug` arm64 build
+carrying the §8.6 unpause fix (`adb install -r` over the existing install, so
+data is preserved).
+
+Rebuild/install loop:
+
+```bash
+source .questenv            # or export JAVA_HOME + PATH by hand
+export JAVA_HOME=/usr/lib/jvm/java-17-temurin-jdk
+export PATH="$HOME/flutter/bin:$PATH"
+THEATER_MODE=1 QUEST=1 flutter build apk --debug \
+  --target-platform android-arm64 \
+  --dart-define=QUEST_BUILD=true --dart-define=THEATER_MODE_BUILD=true
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+adb logcat -G 16M           # 256 KB rotates the compositor output out in minutes
+```
+
+**Do these three things, in this order.**
+
+1. **Settle the capture geometry by eye** before trusting any measurement derived
+   from a screenshot (§8.7's open question, and the caveat now in §6). The files
+   are in `/tmp/quest_shots/`. If the two bright regions in
+   `theater_shot2.png` are *not* two views of one panel, the whole
+   "split at W/2 and SAD" recipe has to be re-derived before it is used to judge
+   the artifact.
+2. **Prove the §8.6 fix directly.** Play, pause, unpause, and watch for
+   `MpvPlayerCore: Public pause state updated: paused=false` — a line that could
+   *not* have appeared before the fix, because nothing wrote `pause=no`. That is
+   the assertion; the picture resuming is the confirmation. While it plays, also
+   settle the §8.7 network question: whether the frame counter stops on its own
+   at a stream reconnect (audio continuing while `N frames rendered` is flat
+   would point at the render path, not the network).
+3. **Only then rank the artifact fixes** (§8.7), and decide the depth polarity
+   (§8.8) first — the sign decides which direction the fold runs, so fixing the
+   artifact before pinning polarity risks tuning against the wrong reference.
+
+**Deliberately not done, so nobody assumes otherwise:**
+
+- No artifact fix is applied. §8.7 lists four candidates and applies none.
+- The flat path's inverted cue (§8.8) is **documented, not changed** — it has
+  shipped, and flipping it changes what users see. It needs one decision.
+- HDR/10-bit is still truncated by the `GL_RGBA8` FBO (§7.4).
+- No subtitle rendering in the theater session (§7.7).
+- Render-thread failure is *not* reported to Kotlin. A `make_current` failure on
+  the GL thread only logs. This was sketched and reverted as speculative: the
+  EGL context is correctly released on the create thread before the GL thread
+  takes it (`unset_current`, `render_gl.cpp` line ~357), so the failure is not
+  reachable by construction today — but a future second failure mode there would
+  be silent, and `render_gl.cpp` has no JNI callback plumbing to report one.
+

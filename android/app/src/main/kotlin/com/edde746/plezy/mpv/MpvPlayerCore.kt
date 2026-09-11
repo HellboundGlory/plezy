@@ -621,18 +621,33 @@ class MpvPlayerCore private constructor(
             collectDecoderState(p)
           }
 
-          Log.d(TAG, "Initialized successfully")
           // After mpv_initialize and before any load can reach this core, and
           // off the main thread because EGL setup plus the shader compile is
           // tens of milliseconds of blocking work. See setRenderSurface.
+          //
+          // Its failures are the session's, not something to swallow: a host
+          // that could not be created means nothing can be rendered, so
+          // reporting success and letting a later `loadfile` fail would only
+          // move the error somewhere less informative.
           pendingRenderSurface?.let { target ->
             Log.d(TAG, "Creating the render-API host")
             withContext(Dispatchers.IO) { createRenderHost(target) }
             Log.d(TAG, "Render-API host ready")
           }
+          Log.d(TAG, "Initialized successfully")
           onResult(true)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+          // Throwable, not Exception, and deliberately: a render-API host is
+          // created from native/EGL/GL entry points, and those fail with
+          // *Errors* rather than exceptions -- UnsatisfiedLinkError for a
+          // missing JNI symbol (which is exactly how a mangled declaration
+          // first surfaced), ExceptionInInitializerError for a library that
+          // cannot load, OutOfMemoryError for an EGL allocation. This handler
+          // runs on Dispatchers.Main inside a coroutine, so letting such an
+          // Error escape kills the whole process mid-session instead of
+          // failing this one session the way onResult(false) is meant to.
           Log.e(TAG, "Failed to initialize native: ${e.message}", e)
+          initFailure = e
           onResult(false)
         }
       }
@@ -862,6 +877,14 @@ class MpvPlayerCore private constructor(
 
   /** The live render host, or null on a `vo`-backed session. See [setRenderSurface]. */
   @Volatile internal var renderHost: MpvRenderHost? = null
+    private set
+
+  /**
+   * Why [initialize] reported failure, when it did. Held rather than folded
+   * into the boolean because the caller is the only thing that can turn it into
+   * something a user sees, and a bare "init failed" string is not diagnosable.
+   */
+  @Volatile internal var initFailure: Throwable? = null
     private set
 
   private fun createRenderHost(target: RenderSurface) {
@@ -1266,7 +1289,22 @@ class MpvPlayerCore private constructor(
 
   // Audio-only mode has no video output to wait for — playback and resume
   // paths gated on output readiness must always proceed there.
-  private fun hasReadyVideoOutput(): Boolean = audioOnly || (videoOutputFailure == null && hasAttachedRealSurface() && !videoOutputRestoring)
+  //
+  // A render-API session is ready as soon as its host exists, and this is not a
+  // convenience: its Surface is never "attached" (there is no `wid` to write —
+  // see [refreshVideoOutput]), so [hasAttachedRealSurface] is permanently false
+  // for one. Left out, every gate below treats a perfectly healthy render-API
+  // session as output-less forever: a resume is deferred with
+  // `deferredResumeRequested = true`, nothing writes `pause=no`, and nothing
+  // can ever clear the flag, because the only thing that would -- a completed
+  // [refreshVideoOutput] -- is inert here. The symptom is a player that pauses
+  // and then ignores every subsequent unpause, confirmed on-device.
+  private fun hasReadyVideoOutput(): Boolean =
+    audioOnly || renderApiReady || (videoOutputFailure == null && hasAttachedRealSurface() && !videoOutputRestoring)
+
+  /** See [hasReadyVideoOutput]: the render-API equivalent of an attached surface. */
+  private val renderApiReady: Boolean
+    get() = renderApi && renderHost != null && videoOutputFailure == null
 
   private fun isCurrentVideoOutputEpoch(epoch: Long): Boolean = !disposing && videoOutputFailure == null && epoch == videoOutputEpoch
 
@@ -1375,6 +1413,15 @@ class MpvPlayerCore private constructor(
 
   private suspend fun applySurfaceSizeInternal(p: MpvPlayer, force: Boolean = false) {
     if (disposing) return
+    // `android-surface-size` tells the Android vo how big the Surface it was
+    // handed is. A render-API session hands mpv no Surface at all (`vo=libmpv`
+    // owns its own output), so there is no such surface to size and the
+    // property is meaningless. Not reachable today -- the theater core is
+    // headless, so no SurfaceView ever exists to report a size -- but
+    // [hasReadyVideoOutput] now reports a render-API core as ready, which is
+    // what used to keep this method inert. Stated as an invariant rather than
+    // left to that coupling.
+    if (renderApi) return
     val width = lastKnownSurfaceWidth
     val height = lastKnownSurfaceHeight
     if (width <= 0 || height <= 0) return
