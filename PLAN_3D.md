@@ -709,16 +709,56 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
     compositor split confirmed genuine via an eye-closing test (closing
     one eye shows only that eye's half); `auto`/`sbs`/`ou` modes all open
     theater mode without error. Real stereo *depth* (as opposed to the
-    split mechanism) was not fully confirmed -- every test file used
-    turned out not to be genuine frame-packed SBS/OU source data (plays
-    back as an ordinary flat video with no doubling in the regular 2D
-    player, which is the tell -- true frame-packed 3D looks visibly
-    squished/doubled even in a non-stereo-aware player). Needs a real
-    frame-packed SBS or OU test file to close out.
+    split mechanism) was **not** confirmable at this point -- every test
+    file used turned out not to be genuine frame-packed SBS/OU source
+    data (plays back as an ordinary flat video with no doubling in the
+    regular 2D player, which is the tell -- true frame-packed 3D looks
+    visibly squished/doubled even in a non-stereo-aware player). **Closed
+    2026-09-11: user-confirmed on-device with genuine frame-packed SBS 3D
+    masters -- `sbs` and `auto` both display correctly.** See the
+    2026-09-11 entry below.
   - **Not yet done**: Phase 2's heuristic `Pseudo3DSbs.glsl` shader is
     still not wired into the native theater path at all -- `auto` mode on
     genuinely flat content currently does a raw (incorrect) SBS split of
     the flat frame rather than applying the heuristic shader, since
     `TheaterMpvSession`'s native `open()` sequence has no shader-chain
     equivalent of the flat player's `getShadersForPreset()`. Scoping that
-    is unstarted.
+    is unstarted -- and per the 2026-09-11 entry below, it is now the
+    **sole** remaining item on the feature's headline claim.
+
+- **2026-09-11 -- Real-stereo passthrough confirmed on-device with genuine
+  frame-packed SBS source.** User tested actual SBS 3D masters on the Quest
+  3; both `sbs` and `auto` display correctly. This closes the last
+  verification gap in the Phase 1 passthrough path -- the earlier
+  2026-09-09 pass could only confirm the *split mechanism* (eye-closing
+  test) because every file available then decoded as ordinary flat video.
+  - **Net state of the feature**: genuine 3D sources (frame-packed SBS/OU)
+    work end-to-end. `auto` detect -> `sbs` on a real SBS file is correct
+    behavior and the raw compositor split is exactly right for it.
+  - **What this does *not* validate**: the heuristic 2D->3D tier. The
+    `Pseudo3DSbs.glsl` shader is still never executed on any path --
+    confirmed by grep, none of the five `ShaderService.applyPreset` call
+    sites (`visual_effects_controller.dart:65/92`, `shader_service.dart:140`,
+    `track_controls.dart:121`, `video_settings_sheet.dart:1349/1379/1402`)
+    passes `threeDConfig`, and `android/app/src/theater3d/` contains zero
+    `glsl-shaders` references. Consequence, unchanged from 2026-09-09:
+    `auto` mode on **flat** content still does a raw SBS split of a flat
+    frame -- double vision, not synthesized depth (the same symptom the
+    user originally reported for non-3D video). The API surface for the
+    fix exists and is unit-tested; only the native theater-path wiring is
+    missing.
+  - **Sharpest single indicator of that gap**: `shaderStrength` is plumbed
+    all the way across the boundary -- `theater3d.dart` -> 
+    `theater3d_bridge.dart` -> `Theater3DChannel.kt`
+    (`args["shaderStrength"]`) -> `Theater3DBridge.TheaterOpenRequest` --
+    and then **dead-ends**: nothing in `TheaterMpvSession` reads it. The
+    wire contract for a strength-controlled shader pass is complete and
+    unused, so the remaining work is purely native: append the extracted
+    `Pseudo3DSbs.glsl` path to the headless session's `glsl-shaders` list
+    before/at load, and set its `strength` param from
+    `request.shaderStrength`. Note the panel is now a plain
+    `VideoSurfacePanelRegistration` (chosen 2026-09-09 so MediaCodec
+    hwdec output works at all), so the shader must run inside mpv's own
+    vo chain -- `MpvPlayerCore` already forces `vo=gpu,gpu-next` for the
+    headless session, which is what makes a `glsl-shaders` append viable
+    at all.
