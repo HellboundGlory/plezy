@@ -317,6 +317,19 @@ never reached in practice. Not fixed here — the filename heuristic is the
 one every VR release actually uses, and a false positive is worse than a
 miss (it would raw-split a flat source).
 
+**Also removed 2026-09-11, found on-device: the local-contrast term in the
+depth proxy.** The block above computed
+`edge = length(fwidth(HOOKED_tex(uv).rgb)) * 4.0` and mixed it into depth, to
+read soft/blurry regions as "far". That is what produced the visible
+artifacts around object edges: `fwidth` is an edge detector, so it peaks
+along silhouettes, and a depth discontinuity there makes the two eyes sample
+different distances across the boundary — a doubled outline/halo tracking the
+content. It is not tunable away (gradient of a resampled image says nothing
+about depth, and its magnitude scales with resolution), so it is gone
+entirely; depth is a smooth vertical ramp. Weaker but stable. Structure-aware
+depth is Phase 3. The shader now has no image-derived depth term at all, and
+a test pins that.
+
 ### 2.2 Data model
 
 ```dart
@@ -937,3 +950,57 @@ smoothing). Do not fold this into the v1 estimate — it is its own project.
   - **Not yet verified**: whether the synthetic tier now *renders* as
     intended on the headset. The parse rejection is fixed and proven; the
     depth heuristic's quality is still unjudged.
+
+- **2026-09-11 -- Synthetic tier confirmed working on-device; then its two
+  follow-on defects, both root-caused.** User confirmed the shader now runs.
+  Two problems remained, and the logcat evidence separated them cleanly.
+  - **The performance problem was never the shader.** The capture showed A/V
+    desynchronisation in *all three* theater sessions — including the two
+    runs from before the shader was fixed, where the shader was appended but
+    rejected by the parser and therefore never executed:
+    `19:01:58` (not running) desync +8s, `19:03:02` (not running) desync +8s,
+    `19:07:37` (running) desync +52s. Plus mpv's own hint,
+    `Consider trying --hwdec=auto`. **The theater session was decoding on the
+    CPU**: `hardwareDecoding` in `MpvPlayerCore` only selects the *vo*, while
+    the `hwdec` property itself is written from Dart
+    (`video_player_screen.dart`'s `_getHwdecValue` →
+    `'mediacodec,mediacodec-copy'`). `TheaterMpvSession` is a second,
+    headless core with no Dart in front of it, so it sat on mpv's default of
+    `hwdec=no`. This also **retroactively explains Phase 1's original
+    `vo=mediacodec` failure** — "Failed to create HW uploader for format
+    yuv420p" is what the fork vo says when it is handed software frames.
+  - **Fix**: `hwdec` is now carried on the request (`TheaterMpvSession`
+    applies it before `loadfile`), computed in `theater3d.dart` from the same
+    `_getHwdecValue` the flat player uses so the user's hardware-decoding
+    setting is honoured. With a shader in the chain it narrows to
+    `mediacodec-copy` rather than the full `mediacodec,mediacodec-copy`
+    fallback list: `-copy` still decodes on MediaCodec but returns ordinary
+    frames mpv uploads as normal textures, which is the deterministic pairing
+    with a user shader, whereas zero-copy `mediacodec` hands mpv external OES
+    textures. Passthrough (no shader) keeps the full list. The session now
+    also logs `hwdec=` and observes `hwdec-current`, so which backend
+    actually engaged is visible rather than inferred.
+  - **The artifacts were the `fwidth` term, and the user's report pinned
+    it** ("the edges of objects are the issue"). The depth proxy blended in
+    `fwidth(HOOKED_tex(...))` as a "soft regions are far" cue. `fwidth` *is*
+    an edge detector, so it is peaked and noisy exactly along object
+    silhouettes; mixing it into depth puts a depth discontinuity there, so
+    each eye samples a different distance across that boundary and edges
+    render as a doubled outline/halo that shimmers with the content. Not
+    fixable by lowering its weight: `fwidth` of a resampled texture measures
+    the image's gradient, not anything about depth or geometry (so "soft ==
+    far" is as likely backwards), and its magnitude depends on the derivative
+    quad, i.e. on resolution. **Removed entirely**; depth is now a smooth
+    vertical ramp. That is a weaker model — it gives a tilted-plane sense of
+    depth rather than structure tracking — but it is stable and artifact-free,
+    and structure-aware depth is Phase 3's ML tier, not something a cheap
+    single-pass expression can fake. Side benefit: one texture fetch instead
+    of a derivative quad's worth.
+  - **Guarded by tests**: the shader body (comments stripped) may contain no
+    `fwidth`/`dFdx`/`dFdy` and exactly one texture fetch, so the removed
+    artifact class cannot be reintroduced silently — no unit test can observe
+    a rendering artifact, so a static tripwire is the only automated defence
+    available.
+  - **Not yet verified**: that the perf and artifact fixes land as intended
+    on the headset. Both are reasoned from the capture and from the shader
+    maths; the device pass is the judge.

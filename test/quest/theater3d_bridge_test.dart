@@ -58,6 +58,7 @@ void main() {
       subtitleTrackId: 3,
       stereoMode: TheaterStereoMode.synthetic,
       shaderPath: '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      hwdec: 'mediacodec-copy',
     );
 
     expect(call?.method, 'open');
@@ -69,6 +70,7 @@ void main() {
       'subtitleTrackId': 3,
       'stereoMode': 'synthetic',
       'shaderPath': '/data/cache/shaders/pseudo3d/Pseudo3DSbs_s075.glsl',
+      'hwdec': 'mediacodec-copy',
     });
   });
 
@@ -80,7 +82,7 @@ void main() {
     });
 
     final bridge = Theater3DBridge();
-    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off);
+    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off, hwdec: 'no');
 
     expect(call?.arguments, {
       'uri': 'file:///movie.mp4',
@@ -90,6 +92,7 @@ void main() {
       'subtitleTrackId': null,
       'stereoMode': 'off',
       'shaderPath': null,
+      'hwdec': 'no',
     });
   });
 
@@ -101,7 +104,7 @@ void main() {
     });
 
     final bridge = Theater3DBridge();
-    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.synthetic);
+    await bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.synthetic, hwdec: 'no');
 
     expect((call?.arguments as Map)['stereoMode'], 'synthetic');
   });
@@ -113,7 +116,7 @@ void main() {
 
     final bridge = Theater3DBridge();
     await expectLater(
-      () => bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off),
+      () => bridge.open(uri: 'file:///movie.mp4', stereoMode: TheaterStereoMode.off, hwdec: 'no'),
       throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'already_open')),
     );
   });

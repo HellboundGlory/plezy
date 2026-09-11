@@ -137,6 +137,11 @@ class Theater3DBridge {
   /// callers on Quest-only surfaces should not normally hit that path, but
   /// must handle it the same as a session that reports [TheaterErrorEvent]
   /// rather than let it propagate as an unhandled platform error.
+  ///
+  /// [hwdec] is the mpv `hwdec` value the native session applies before its
+  /// load. It is required rather than defaulted because the correct value
+  /// depends on whether a shader is in the chain (see `theater3d.dart`), and
+  /// a wrong-but-plausible default here silently means CPU decoding.
   Future<void> open({
     required String uri,
     Map<String, String> headers = const {},
@@ -145,6 +150,7 @@ class Theater3DBridge {
     int? subtitleTrackId,
     required TheaterStereoMode stereoMode,
     String? shaderPath,
+    required String hwdec,
   }) {
     return _methodChannel.invokeMethod<void>('open', {
       'uri': uri,
@@ -154,6 +160,7 @@ class Theater3DBridge {
       'subtitleTrackId': subtitleTrackId,
       'stereoMode': stereoMode.wireValue,
       'shaderPath': shaderPath,
+      'hwdec': hwdec,
     });
   }
 }

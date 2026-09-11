@@ -214,6 +214,28 @@ void main() {
     expect(offenders, isEmpty, reason: 'these lines would truncate the shader body');
   });
 
+  /// The depth proxy must not be derived from image gradients. An earlier
+  /// revision mixed `fwidth()` of the sampled colour into depth as a
+  /// "soft regions are far" cue, which rendered as a doubled outline / halo
+  /// around every object edge: fwidth is an edge detector, so it is peaked
+  /// exactly along silhouettes, and a depth discontinuity there makes the two
+  /// eyes disagree about where the edge is. No unit test can see that, so this
+  /// is the tripwire.
+  test('the pseudo-3D depth proxy derives nothing from image gradients', () async {
+    final source = await bundledText('pseudo3d/Pseudo3DSbs.glsl');
+    // Comments discuss the removed term on purpose; only code is checked.
+    final code = source
+        .split('\n')
+        .where((line) => !line.trimLeft().startsWith('//'))
+        .join('\n');
+
+    for (final builtin in ['fwidth', 'dFdx', 'dFdy']) {
+      expect(code, isNot(contains(builtin)), reason: '$builtin reintroduces edge-boundary depth artifacts');
+    }
+    // Exactly one fetch: the disparity sample itself.
+    expect(RegExp(r'HOOKED_tex\(').allMatches(code).length, 1);
+  });
+
   test('materializes one stable file per quantized strength', () async {
     final first = await ShaderAssetLoader.materializePseudo3DShader(0.25);
     final repeat = await ShaderAssetLoader.materializePseudo3DShader(0.25);

@@ -67,6 +67,10 @@ class TheaterMpvSession(
       }
       playerCore.attachHeadlessSurface(surface, width, height)
       playerCore.observeProperty("time-pos", "double")
+      // What mpv actually settled on, which can differ from the requested
+      // value (fallback order, per-file decode routing). First thing to check
+      // if playback is ever slow or out of sync again.
+      playerCore.observeProperty("hwdec-current", "string")
       openRequestedMedia(playerCore)
     }
   }
@@ -92,6 +96,17 @@ class TheaterMpvSession(
       Log.i(TAG, "Appending pseudo-3D shader: $shaderPath")
       playerCore.command(arrayOf("change-list", "glsl-shaders", "append", shaderPath))
     }
+
+    // Decoder backend, before the load. Without this the session decodes in
+    // software: the flat player writes `hwdec` from Dart, and this second,
+    // headless core has nothing in front of it doing that, so mpv sits on its
+    // default of `no`. That was the whole cause of the theater session
+    // playing at a fraction of real time and drifting out of sync with the
+    // audio -- and, earlier, of the fork vo=mediacodec failing here with
+    // "Failed to create HW uploader for format yuv420p", because it was being
+    // handed CPU frames to composite.
+    playerCore.setProperty("hwdec", request.hwdec)
+    Log.i(TAG, "hwdec=${request.hwdec}")
 
     if (request.positionMs > 0) {
       playerCore.setProperty("start", (request.positionMs / 1000.0).toString())
@@ -138,9 +153,12 @@ class TheaterMpvSession(
   }
 
   override fun onPropertyChange(name: String, value: Any?) {
-    if (name == "time-pos") {
-      val seconds = value as? Double ?: return
-      lastKnownPositionMs = (seconds * 1000.0).toLong()
+    when (name) {
+      "time-pos" -> {
+        val seconds = value as? Double ?: return
+        lastKnownPositionMs = (seconds * 1000.0).toLong()
+      }
+      "hwdec-current" -> Log.i(TAG, "hwdec-current=${value ?: "none"}")
     }
   }
 

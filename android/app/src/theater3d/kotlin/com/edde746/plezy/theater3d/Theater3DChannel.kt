@@ -79,7 +79,11 @@ class Theater3DChannel(
         audioTrackId = (args["audioTrackId"] as? Number)?.toInt(),
         subtitleTrackId = (args["subtitleTrackId"] as? Number)?.toInt(),
         stereoMode = args["stereoMode"] as? String ?: "off",
-        shaderPath = args["shaderPath"] as? String
+        shaderPath = args["shaderPath"] as? String,
+        // Absent means "leave mpv's default", which is software. Callers on
+        // this path always send it; the fallback only keeps the contract
+        // total rather than inventing a backend.
+        hwdec = args["hwdec"] as? String ?: "no"
       )
 
     val session = TheaterMpvSession(activity, request, sessionCallback)

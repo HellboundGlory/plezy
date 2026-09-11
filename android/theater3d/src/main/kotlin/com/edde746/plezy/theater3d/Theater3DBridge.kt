@@ -45,12 +45,19 @@ object Theater3DBridge {
    * [shaderPath] is an already-materialized mpv user-shader file for
    * [TheaterMpvSession] to append to the headless session's `glsl-shaders`
    * before its `loadfile`, or null for real SBS/OU passthrough content.
-   * It is a path rather than a strength value because mpv can only override
-   * a user shader's `//!PARAM` on `vo=gpu-next`, and the theater session's
-   * GL backend is chosen per file -- so the strength is baked into the
-   * shader's source by Dart (`ShaderAssetLoader.materializePseudo3DShader`,
-   * which also owns the extraction directory), and the native side only
-   * ever consumes a file path.
+   * It is a path rather than a strength value because mpv's `PARAM` metadata
+   * is a libplacebo (vo=gpu-next) feature, and the theater session's GL
+   * backend is chosen per file -- so the strength is baked into the shader's
+   * source by Dart (`ShaderAssetLoader.materializePseudo3DShader`, which also
+   * owns the extraction directory), and the native side only ever consumes a
+   * file path.
+   *
+   * [hwdec] is the mpv `hwdec` value to apply before the load, e.g.
+   * `"mediacodec,mediacodec-copy"` or `"no"`. It has to be carried
+   * explicitly: the flat player writes this property from Dart
+   * (`_getHwdecValue`), and this second, headless core has no Dart in front
+   * of it, so without it mpv falls back to its default of `no` and decodes
+   * on the CPU.
    */
   data class TheaterOpenRequest(
     val uri: String,
@@ -59,7 +66,8 @@ object Theater3DBridge {
     val audioTrackId: Int?,
     val subtitleTrackId: Int?,
     val stereoMode: String,
-    val shaderPath: String?
+    val shaderPath: String?,
+    val hwdec: String
   )
 
   interface Listener {

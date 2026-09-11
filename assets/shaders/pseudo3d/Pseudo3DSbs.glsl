@@ -42,16 +42,30 @@ vec4 hook() {
     bool isLeftHalf = uv.x < 0.5;
     vec2 srcUv = vec2(fract(uv.x * 2.0), uv.y);
 
-    // Fake depth proxy from cheap, already-available signals: a vertical
-    // term (in most footage the bottom of frame is the ground plane, so it
-    // reads "near", the top "far") blended with a local-contrast edge term
-    // (soft/blurry regions read "far"). HOOKED_pos.y is 0 at the image's
-    // top and 1 at its bottom in both storage orientations -- mpv's
-    // get_transform() folds each plane's bottom-up/stride<0 storage into a
-    // flip so that holds regardless of how the frame was uploaded.
-    float farness = 1.0 - srcUv.y;
-    float edge    = length(fwidth(HOOKED_tex(srcUv).rgb)) * 4.0;
-    float depth   = clamp(mix(farness, edge, 0.35), 0.0, 1.0);
+    // Depth proxy: a smooth vertical ramp. In most footage the bottom of
+    // frame is the ground plane, so it reads "near", and the top "far".
+    // HOOKED_pos.y is 0 at the image's top and 1 at its bottom in both
+    // storage orientations -- mpv's get_transform() folds each plane's
+    // bottom-up/stride<0 storage into a flip, so that holds regardless of
+    // how the frame was uploaded.
+    //
+    // This deliberately carries NO image-derived term. The plan originally
+    // blended in a local-contrast term (fwidth of the sampled colour) to
+    // read soft regions as "far", and it is exactly what produced the
+    // visible artifacts this shipped with: fwidth IS an edge detector, so it
+    // is peaked and noisy precisely along object silhouettes, and mixing it
+    // into depth puts a depth discontinuity there. Each eye then samples a
+    // different distance across that boundary, so edges render as a doubled
+    // outline / halo instead of a clean edge -- and the effect tracks the
+    // video content, shimmering frame to frame. Two further reasons it is
+    // not salvageable by tuning its weight down: fwidth of a *resampled*
+    // texture measures the image's gradient rather than anything about
+    // depth or geometry (so "soft == far" is as likely to be backwards),
+    // and its magnitude depends on the derivative quad, i.e. on resolution.
+    // Structure-aware depth is Phase 3's ML tier, not something a cheap
+    // single-pass expression can fake. Smooth and stable beats detailed and
+    // broken.
+    float depth = clamp(1.0 - srcUv.y, 0.0, 1.0);
 
     // Disparity is strictly horizontal and opposite per eye, and 0.5 is the
     // convergence plane: below it the eye samples are crossed (perceived

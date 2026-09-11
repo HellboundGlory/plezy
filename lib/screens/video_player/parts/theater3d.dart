@@ -49,6 +49,23 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
       }
     }
 
+    // Decoder backend for the theater session's own mpv core. It must be
+    // carried explicitly: the flat player writes `hwdec` from Dart
+    // (`_getHwdecValue` below), and the theater core is a second, headless
+    // session that no Dart property write reaches -- so left alone it sat on
+    // mpv's default of `no` and decoded on the CPU, which is what made
+    // theater mode play at a fraction of real time and drift out of sync
+    // with the audio.
+    //
+    // `mediacodec-copy` rather than zero-copy `mediacodec` whenever a shader
+    // is in the chain: zero-copy hands mpv external OES textures, while
+    // `-copy` still decodes on MediaCodec but returns ordinary frames mpv
+    // uploads as normal textures -- the deterministic pairing with a user
+    // shader. With no shader (real SBS/OU passthrough) the full fallback list
+    // is used, matching what the flat player runs on this device.
+    var hwdec = _getHwdecValue(SettingsService.instance.read(SettingsService.enableHardwareDecoding));
+    if (shaderPath != null && hwdec != 'no') hwdec = 'mediacodec-copy';
+
     late final StreamSubscription<TheaterExitEvent> exitSubscription;
     late final StreamSubscription<TheaterErrorEvent> errorSubscription;
     var settled = false;
@@ -83,6 +100,7 @@ extension _VideoPlayerTheater3DMethods on VideoPlayerScreenState {
         position: resumePosition,
         stereoMode: stereoMode,
         shaderPath: shaderPath,
+        hwdec: hwdec,
       );
     } catch (e, st) {
       settle();
