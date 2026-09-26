@@ -5,9 +5,11 @@ Spatial SDK, no VR intent category. Horizon runs it as an ordinary resizable
 Android window, which is what gives it snap points, move/scale, minimize/close
 and the system keyboard overlay (including the dictation mic) for free.
 
-The fork is built to stay close to upstream. Exactly two upstream files are
-touched, by 26 added lines and **zero modified or deleted lines**; everything
-else lives in new files upstream has no path for.
+The fork is built to stay close to upstream. Six upstream files are touched, by
+183 added and 6 replaced lines; everything else lives in new files upstream has
+no path for. That is what keeps the sync a clean rebase — see
+[Shipping an upstream update](#shipping-an-upstream-update) and
+[Upstream files this fork modifies](#upstream-files-this-fork-modifies).
 
 ## Repository layout
 
@@ -21,31 +23,238 @@ else lives in new files upstream has no path for.
 | `main` | Clean mirror of `upstream/main`. Never commit here. |
 | `quest` | `main` + the Quest commits. All work happens here. |
 
-## Syncing with Plezy upstream
+## Shipping an upstream update
 
-Keeping `main` pristine means the sync is always a clean rebase of a tiny
-patch set:
+This is the whole loop, from "upstream released something" to "the headset and
+the Fire TV stick offer the update". Run it in order; every step has a check
+that tells you whether to continue.
+
+### 1. See what upstream did
 
 ```bash
-git fetch upstream
+git fetch upstream --tags
+git log --oneline main..upstream/main
+```
 
-# Fast-forward the pristine mirror
+Read the log rather than skimming it. You are looking for two things: the
+version upstream bumped to (it names the fork's next version, step 4), and any
+commit that changes runtime behaviour on a TV/Android form factor, since Quest
+and Fire TV both take that path. Those are the notes for the release body and
+the things to re-check on device.
+
+### 2. Predict the rebase before you start it
+
+The fork touches six upstream files. A conflict is possible only where upstream
+edited one of those same six, so ask git directly:
+
+```bash
+comm -12 <(git diff --name-only main..upstream/main | sort) \
+         <(git diff --name-only main..quest | sort)
+```
+
+Empty output means the rebase cannot conflict — everything upstream moved is a
+file the fork never touches. Any filename it prints is a file to resolve by
+hand, and the rule is always the same: **take upstream's version of the
+surrounding code and re-add the fork's insertion.** Nothing under
+`android/quest/`, `android/selfupdate/`, `lib/quest/`, `lib/selfupdate/`,
+`test/quest/` or `test/selfupdate/` can ever appear here, because upstream has
+no such paths.
+
+### 3. Fast-forward `main`, replay `quest`
+
+```bash
+# main is a pristine mirror — it only ever fast-forwards
 git checkout main
 git merge --ff-only upstream/main
 git push origin main
 
-# Replay the Quest commits on top
+# replay the fork's commits on top
 git checkout quest
 git rebase main
-flutter pub get
+flutter pub get                       # upstream may have moved pubspec.lock
+```
+
+Then prove the fork survived the replay, before building anything:
+
+```bash
+source .questenv
+flutter test test/quest test/selfupdate
+grep -n "abiFilters.clear()" android/app/build.gradle.kts   # expect 2 hits: AMAZON and QUEST
+grep -n "include(\":quest\")\|include(\":selfupdate\")" android/settings.gradle.kts
+```
+
+Both `abiFilters.clear()` hits matter, but the one inside upstream's `AMAZON`
+block is the fragile one: it is the fork's Fire TV size fix, sitting in code
+upstream owns, and it is one of only two places the fork changes upstream
+*behaviour* rather than adding to it. The other is the `Listener` in
+`lib/widgets/tv_browse_rail.dart`. Those two are what a careless conflict
+resolution silently drops, so re-check them by eye whenever step 2 printed a
+filename.
+
+Push the branch once the tests pass. The rebase rewrote history, so this is a
+force push, and `--force-with-lease` is what keeps it safe:
+
+```bash
 git push --force-with-lease origin quest
 ```
 
-If the rebase ever conflicts it will be in one of only two files —
-`android/app/build.gradle.kts` or `android/settings.gradle.kts` — and the
-resolution is always "keep upstream's version of the surrounding code, re-add
-the `QUEST` block". Nothing in `android/quest/`, `lib/quest/` or `test/quest/`
-can conflict, because upstream has no such paths.
+### 4. Choose the version and the build number
+
+Two independent numbers, and they fail in different ways if you get them wrong.
+
+**`--build-name` — the versionName, and the thing the updater compares.**
+Take upstream's new version and append the fork revision:
+`<upstream version>.<fork revision>`. Reset the fourth component to `1` whenever
+upstream's version changed; bump it only when re-releasing on top of the same
+upstream version.
+
+| Last fork release | Upstream now | Next fork version |
+| --- | --- | --- |
+| `2.17.1.1` | `2.18.0` | `2.18.0.1` |
+| `2.18.0.1` | `2.18.0` (unchanged) | `2.18.0.2` |
+
+The reasoning behind the fourth component is in
+[Version the fork with a fourth component](#version-the-fork-with-a-fourth-component).
+
+**`--build-number` — the versionCode, and the thing Android enforces.** It must
+be strictly greater than the last one *this fork shipped*, and it must also
+clear whatever upstream's `pubspec.yaml` now carries, because the offsets are
+added to the same number for both:
+
+```bash
+# what upstream's pubspec now says
+git show upstream/main:pubspec.yaml | grep -m1 '^version:'
+# what the fork last shipped
+/home/james/Android/Sdk/build-tools/36.1.0/aapt2 dump badging \
+  ~/Downloads/Projects/plezy-apks/plezy-quest-<last version>-arm64.apk | grep ^package
+```
+
+> **This is the step that bites.** Upstream's 2.18.0 shipped as `2.18.0+147` —
+> and `147` is exactly the build number the fork's own 2.17.1.1 release used.
+> Inheriting it would rebuild `versionCode` **4147** — the code already
+> installed — and Android rejects an upgrade that does not increase it. Take
+> the larger of the two numbers and add one: `148`.
+
+Never edit `version:` in `pubspec.yaml` to set either. Upstream rewrites that
+line every release, so editing it converts a conflict-free rebase into a
+guaranteed conflict forever. Both numbers are build-time flags.
+
+### 5. Build both targets
+
+Both commands write the same path — `build/app/outputs/flutter-apk/app-release.apk`
+— so each build silently overwrites the other's output. Copy each one out
+before starting the next.
+
+```bash
+source .questenv
+VER=2.18.0.1
+NUM=148
+OUT=~/Downloads/Projects/plezy-apks
+mkdir -p "$OUT"
+
+# Quest
+QUEST=1 flutter build apk --release \
+  --target-platform=android-arm64 \
+  --build-name=$VER --build-number=$NUM \
+  --dart-define=QUEST_BUILD=true \
+  --dart-define=ENABLE_UPDATE_CHECK=true \
+  --dart-define=UPDATE_GITHUB_REPO=HellboundGlory/plezy \
+  --dart-define=SELF_UPDATE_TARGET=quest
+cp build/app/outputs/flutter-apk/app-release.apk "$OUT/plezy-quest-$VER-arm64.apk"
+
+# Fire TV
+AMAZON=1 flutter build apk --release \
+  --build-name=$VER --build-number=$NUM \
+  --dart-define=ENABLE_UPDATE_CHECK=true \
+  --dart-define=UPDATE_GITHUB_REPO=HellboundGlory/plezy \
+  --dart-define=SELF_UPDATE_TARGET=firetv
+cp build/app/outputs/flutter-apk/app-release.apk "$OUT/plezy-firetv-$VER.apk"
+```
+
+The three self-update defines are not optional for a release build. Without
+`SELF_UPDATE_TARGET` the build reverts to notify-and-open-a-browser, and without
+`UPDATE_GITHUB_REPO` it polls *upstream's* releases and offers desktop assets it
+cannot install.
+
+### 6. Verify the APKs before publishing
+
+```bash
+A=/home/james/Android/Sdk/build-tools/36.1.0/aapt2
+S=/home/james/Android/Sdk/build-tools/36.1.0/apksigner
+for f in "$OUT"/plezy-*-$VER*.apk; do
+  echo "--- $(basename $f)"
+  $A dump badging "$f" 2>/dev/null | grep -E "^package|native-code"
+  $S verify --print-certs "$f" 2>/dev/null | grep -m1 'SHA-256 digest'
+done
+```
+
+Four things have to be true, and each maps to a specific way the release breaks:
+
+| Check | Expected | If wrong |
+| --- | --- | --- |
+| `versionName` | the tag you are about to push, without the `v` | the updater never stops offering the update, or never offers it |
+| `versionCode` | Quest `4<num>`, Fire TV `3<num>`, both above the last release | Android refuses the upgrade |
+| `native-code` | Quest `arm64-v8a` alone; Fire TV `arm64-v8a armeabi-v7a` | a dead x86_64 slice, i.e. the ABI filter did not take |
+| cert SHA-256 | **identical** to the previous release's | no in-place upgrade; users must uninstall and lose their data |
+
+The certificate digest is the one worth diffing rather than eyeballing — run the
+same `apksigner` line against the previous release's APK and compare. Every
+release, both targets, must be `~/.keystores/plezy-quest.jks`.
+
+### 7. Publish
+
+The tag must equal the `versionName` the APKs were built with (a leading `v` is
+stripped before comparison, so `v2.18.0.1` and `2.18.0.1` are both fine), and
+the asset filenames must carry `plezy-quest` / `plezy-firetv` — that substring
+is how each build finds its own asset. See
+[Asset naming is the contract](#asset-naming-is-the-contract).
+
+```bash
+git tag v$VER && git push origin v$VER
+gh release create v$VER \
+  "$OUT/plezy-quest-$VER-arm64.apk" \
+  "$OUT/plezy-firetv-$VER.apk" \
+  --repo HellboundGlory/plezy \
+  --title "v$VER" \
+  --notes "Rebased on upstream 2.18.0. <upstream highlights from step 1>"
+```
+
+### 8. Confirm the update lands
+
+Installed builds poll on a 6-hour cooldown, so force it: **Settings → Check for
+updates** on the headset. The dialog appears, the primary button downloads the
+matching asset and hands it to Horizon's package installer, and you confirm the
+system install prompt. Same flow on the Fire TV stick.
+
+If the dialog opens a browser instead of installing, the build lost its
+`SELF_UPDATE_TARGET` (step 5). If it never appears, compare the tag against the
+installed `versionName` (step 4). For the first install on a device, or to skip
+the updater entirely:
+
+```bash
+adb install -r "$OUT/plezy-quest-$VER-arm64.apk"
+```
+
+### The sync that produced 2.18.0.1, as a worked example
+
+Recorded because it exercised every check above and is the shape a normal sync
+takes.
+
+- **Upstream:** 6 commits, `2.17.1` → `2.18.0`. One mattered to these targets:
+  `feat(player): move every Android install to the mpv backend` moves the
+  backend choice to a new `android_use_exoplayer` key and drops the old one at
+  startup, so any Quest or Fire TV install that had explicitly picked ExoPlayer
+  comes back on mpv after this update. The rest were Windows packaging, i18n
+  and an HDR restore fix.
+- **Conflict prediction:** the `comm` check printed nothing. Upstream moved 51
+  files, none of them among the fork's six. The rebase of all 8 fork commits
+  applied clean.
+- **Verification:** 22 fork tests pass, both `abiFilters.clear()` hits present.
+- **Numbering:** upstream's `2.18.0+147` collided with the fork's last shipped
+  build number, exactly as warned in step 4 — so `2.18.0.1` at build 148.
+- **Artifacts:** `plezy-quest-2.18.0.1-arm64.apk` (94.5 MB, versionCode 4148,
+  `arm64-v8a`) and `plezy-firetv-2.18.0.1.apk` (169.6 MB, versionCode 3148,
+  `arm64-v8a armeabi-v7a`), both signed `2024…71d2`, matching 2.17.1.1.
 
 ## Toolchain
 
@@ -206,9 +415,7 @@ accordingly or the app will not find its update:
 | Quest | `plezy-quest-<version>-arm64.apk` |
 | Fire TV | `plezy-firetv-<version>.apk` |
 
-### Cutting a release
-
-#### Version the fork with a fourth component
+### Version the fork with a fourth component
 
 `UpdateService` compares the release **tag** against the installed
 `versionName`, and `_parseVersionParts` splits on `.`, pads missing components
@@ -226,34 +433,22 @@ later rebase onto upstream's real 2.17.2 would produce a build the fork's own
 users could not be offered.
 
 **Do not bump `version:` in `pubspec.yaml`.** Upstream changes that line every
-release, so editing it means a rebase conflict every time. Pass the version at
+release, so editing it means a rebase conflict every time. Pass both numbers at
 build time instead:
 
 ```bash
---build-name=2.17.1.1 --build-number=147
+--build-name=2.18.0.1 --build-number=148
 ```
 
-`versionCode` must still increase for Android to accept an upgrade. It is
-derived from `--build-number` plus the `+4000` / `+3000` offset, so always pass
-a build number higher than the last one you shipped — if upstream's build number
-has raced past yours, take whichever is larger.
+`versionCode` is derived from `--build-number` plus the `+4000` / `+3000`
+offset, so it must always increase — including past upstream's own build number,
+which the fork inherits from `pubspec.yaml` and which regularly collides with
+the last one the fork shipped.
 
-```bash
-# 1. build both targets with the fork version (see flags above), copying each out
-cp build/app/outputs/flutter-apk/app-release.apk \
-   ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.1.1-arm64.apk
-cp build/app/outputs/flutter-apk/app-release.apk \
-   ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.1.1.apk
-
-# 2. publish. The tag must equal the versionName the APKs were built with.
-gh release create v2.17.1.1 \
-  ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.1.1-arm64.apk \
-  ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.1.1.apk \
-  --title "v2.17.1.1" --notes "..."
-```
-
-Installed builds pick it up within 6 hours, or immediately via
-**Settings → Check for updates**.
+The mechanics of an actual release — picking the numbers, building both targets,
+verifying the APKs and publishing — are step 4 onward of
+[Shipping an upstream update](#shipping-an-upstream-update). This section is
+only the reasoning behind the version scheme.
 
 ### Signing must not change
 
@@ -480,8 +675,11 @@ QUEST_BUILD.md                                  # this file
 
 ## Upstream files this fork modifies
 
-Both changes are pure insertions guarded by `System.getenv("QUEST")`, so the
-default and Amazon builds are byte-identical to upstream.
+Six files, and this list is the conflict surface for every upstream sync — step
+2 of [Shipping an upstream update](#shipping-an-upstream-update) is just asking
+whether upstream touched any of them. The Gradle changes are insertions guarded
+by `System.getenv("QUEST")`, so the default Play build stays byte-identical to
+upstream.
 
 - `android/settings.gradle.kts` — `include(":quest")` and `include(":selfupdate")`
 - `android/app/build.gradle.kts` — the `QUEST` block mirroring the existing
