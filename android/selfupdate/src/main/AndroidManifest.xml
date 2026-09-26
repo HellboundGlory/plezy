@@ -1,0 +1,13 @@
+<!-- Lets a sideloaded build install its own update.
+
+     Kept out of app/src/main/AndroidManifest.xml so the Play Store build never
+     acquires it (self-updating violates Play policy) and so upstream's manifest
+     stays byte-identical.
+
+     The install itself goes through background_downloader's openFile(), which
+     hands Android a FileProvider content:// URI with FLAG_GRANT_READ_URI_PERMISSION
+     and the APK mime type. Verified on Quest 3: com.android.packageinstaller's
+     InstallStart resolves that intent. No native code is needed. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>

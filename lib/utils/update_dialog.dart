@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../i18n/strings.g.dart';
+import '../selfupdate/apk_self_updater.dart';
 import '../services/update_service.dart';
 import '../widgets/dialog_action_button.dart';
 import 'dialogs.dart';
@@ -48,9 +49,16 @@ Future<void> showUpdateAvailableDialog(
             ),
           DialogActionButton(
             onPressed: () async {
-              final url = Uri.parse(releaseUrl);
-              if (await canLaunchUrl(url)) {
-                await launchUrl(url, mode: LaunchMode.externalApplication);
+              // Sideloaded Quest/Fire TV builds install the APK in place; every
+              // other build keeps upstream's open-the-release-page behaviour.
+              // A failed self-update falls through to the same browser path.
+              final selfUpdated = ApkSelfUpdater.isSupported &&
+                  (await ApkSelfUpdater.downloadAndInstall(repo: UpdateService.githubRepo)).isStarted;
+              if (!selfUpdated) {
+                final url = Uri.parse(releaseUrl);
+                if (await canLaunchUrl(url)) {
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                }
               }
               if (dialogContext.mounted) Navigator.pop(dialogContext);
             },
