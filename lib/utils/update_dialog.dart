@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../i18n/strings.g.dart';
 import '../selfupdate/apk_self_updater.dart';
+import '../selfupdate/self_update_button.dart';
 import '../services/update_service.dart';
 import '../widgets/dialog_action_button.dart';
 import 'dialogs.dart';
@@ -47,24 +48,29 @@ Future<void> showUpdateAvailableDialog(
               },
               label: t.update.skipVersion,
             ),
-          DialogActionButton(
-            onPressed: () async {
-              // Sideloaded Quest/Fire TV builds install the APK in place; every
-              // other build keeps upstream's open-the-release-page behaviour.
-              // A failed self-update falls through to the same browser path.
-              final selfUpdated = ApkSelfUpdater.isSupported &&
-                  (await ApkSelfUpdater.downloadAndInstall(repo: UpdateService.githubRepo)).isStarted;
-              if (!selfUpdated) {
+          // Sideloaded Quest/Fire TV builds install the APK in place, and say so
+          // on the button while they do it. Every other build keeps upstream's
+          // open-the-release-page behaviour, unchanged, on the else branch.
+          if (ApkSelfUpdater.isSupported)
+            SelfUpdateActionButton(
+              repo: UpdateService.githubRepo,
+              releaseUrl: releaseUrl,
+              onFinished: () {
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              },
+            )
+          else
+            DialogActionButton(
+              onPressed: () async {
                 final url = Uri.parse(releaseUrl);
                 if (await canLaunchUrl(url)) {
                   await launchUrl(url, mode: LaunchMode.externalApplication);
                 }
-              }
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-            },
-            label: t.update.viewRelease,
-            isPrimary: true,
-          ),
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              },
+              label: t.update.viewRelease,
+              isPrimary: true,
+            ),
         ],
       );
     },

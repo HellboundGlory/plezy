@@ -6,7 +6,7 @@ Android window, which is what gives it snap points, move/scale, minimize/close
 and the system keyboard overlay (including the dictation mic) for free.
 
 The fork is built to stay close to upstream. Six upstream files are touched, by
-183 added and 6 replaced lines; everything else lives in new files upstream has
+197 added and 14 replaced lines; everything else lives in new files upstream has
 no path for. That is what keeps the sync a clean rebase — see
 [Shipping an upstream update](#shipping-an-upstream-update) and
 [Upstream files this fork modifies](#upstream-files-this-fork-modifies).
@@ -384,6 +384,50 @@ The user still confirms each install in the system dialog.
 If anything fails — no matching asset, download error, installer refused — it
 silently falls back to upstream's browser behaviour.
 
+### The button has to narrate the download
+
+Upstream's primary button is labelled **View Release** and opens a browser, so
+it can be stateless: press, leave, done. The self-update path is not that. It
+resolves the release, pulls 95–170 MB, then hands the file to the package
+installer — 30 seconds or more on a headset, all of it with the dialog still on
+screen. Shipped with upstream's label and no feedback, that button claimed to do
+one thing, did another, and looked dead while doing it.
+
+So on a sideload build the primary action is
+`lib/selfupdate/self_update_button.dart` instead, and it names every phase:
+
+| Phase | Label |
+| --- | --- |
+| idle | **Download & Install** |
+| resolving the GitHub release | **Finding update…** |
+| downloading, before the first reading | **Downloading…** |
+| downloading | **Downloading 42%** (with a determinate ring) |
+| handing off to the installer | **Opening installer…** |
+
+Three things about it are load-bearing rather than cosmetic:
+
+- **It is a separate widget, not a branch inside upstream's button.** The `if
+  (ApkSelfUpdater.isSupported)` in `lib/utils/update_dialog.dart` has upstream's
+  original `DialogActionButton` on its `else`, unchanged apart from the extra
+  indentation, so the Play and desktop builds keep running upstream's code.
+- **`onPressed` stays non-null while the download runs.** `FocusableButton`
+  passes `canRequestFocus: enabled`, so disabling the button mid-download would
+  drop focus — and on the TV layout that Quest renders, the D-pad would land
+  somewhere else entirely. The handler returns early instead.
+- **Negative progress values are dropped.** `background_downloader` reports
+  paused, retrying and failed as sentinels on the progress callback
+  (`progressWaitingToRetry` is `-4.0`), so forwarding them verbatim would render
+  as "Downloading -400%". Anything outside `0..1` is ignored and the label holds
+  its last real reading.
+
+The labels are **English-only, deliberately.** Every other string in the dialog
+comes from `t.update.*`, but adding a key there means editing
+`lib/i18n/en.i18n.json` plus the 24 generated `strings_*.g.dart` files — which
+upstream rewrites on essentially every release, as the 2.18.0 sync showed. Two
+short strings on a sideload-only build are not worth a permanent 25-file rebase
+conflict. If upstream ever ships an install-and-update label of its own, delete
+these and use it.
+
 ### Build flags
 
 ```bash
@@ -667,8 +711,10 @@ android/selfupdate/src/main/AndroidManifest.xml # REQUEST_INSTALL_PACKAGES
 lib/quest/quest_platform.dart                   # Quest/Horizon device detection
 lib/selfupdate/self_update_target.dart          # target + release-asset selection
 lib/selfupdate/apk_self_updater.dart            # download + hand to the installer
+lib/selfupdate/self_update_button.dart          # the progress-reporting primary button
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
+test/selfupdate/self_update_button_test.dart
 QUEST_BUILD.md                                  # this file
 .questenv                                       # toolchain environment
 ```
@@ -690,8 +736,8 @@ upstream.
   controller")
 - `lib/services/update_service.dart` — repo and appcast URL become
   `String.fromEnvironment` with upstream's values as defaults
-- `lib/utils/update_dialog.dart` — the primary button tries the self-updater
-  before falling back to upstream's browser path
+- `lib/utils/update_dialog.dart` — sideload builds swap in
+  `SelfUpdateActionButton`; upstream's button is untouched on the `else`
 - `README.md` — the GPLv3 §5a "modified version" notice
 
 Only `tv_browse_rail.dart` and the `AMAZON` `abiFilters.clear()` change
