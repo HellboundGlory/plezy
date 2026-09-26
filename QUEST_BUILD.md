@@ -107,20 +107,46 @@ Output: `build/app/outputs/flutter-apk/app-release.apk`
 `--dart-define=QUEST_BUILD=true` is optional; it only sets the `kQuestBuild`
 hint in `lib/quest/quest_platform.dart`.
 
-### Signing
+### Signing — required, not optional
 
-Release signing uses `android/key.properties` if present, exactly as upstream:
+`flutter build apk --release` produces an **unsigned** APK unless
+`android/key.properties` exists, and Horizon refuses it with
+`INSTALL_PARSE_FAILED_NO_CERTIFICATES`. (The comment in
+`android/app/build.gradle.kts` claims it falls back to debug signing without
+`key.properties`; it does not — AGP simply leaves `release` unsigned.)
 
-```properties
-storeFile=/absolute/path/to/keystore.jks
-storePassword=...
-keyAlias=...
-keyPassword=...
+This machine already has a keystore set up for the fork:
+
+| | |
+| --- | --- |
+| Keystore | `~/.keystores/plezy-quest.jks` |
+| Alias | `plezy-quest` |
+| Password (store and key) | `plezyquest` |
+| Validity | 10000 days |
+
+and `android/key.properties` points at it. Both `key.properties` and `*.jks`
+are already in upstream's `android/.gitignore`, so neither is committed — which
+also means **the keystore is not backed up by git**. Copy it somewhere safe; if
+you lose it you cannot upgrade an existing install in place, only uninstall and
+reinstall.
+
+To recreate it from scratch:
+
+```bash
+keytool -genkeypair -v -keystore ~/.keystores/plezy-quest.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias plezy-quest \
+  -storepass plezyquest -keypass plezyquest \
+  -dname "CN=Plezy Quest Fork, OU=Private, O=HellboundGlory, C=GB"
+
+cat > android/key.properties <<'EOF'
+storeFile=/home/james/.keystores/plezy-quest.jks
+storePassword=plezyquest
+keyAlias=plezy-quest
+keyPassword=plezyquest
+EOF
 ```
 
-Without it the build falls back to the debug key, which is fine for sideloading
-but means an existing install must be uninstalled before a differently-signed
-APK will install.
+The same keystore signs the Fire TV build, so both targets share one identity.
 
 ## Sideloading with ADB
 
@@ -162,15 +188,18 @@ AMAZON=1 flutter build apk --release
 Do not set `AMAZON` and `QUEST` together: both write `versionCode` and
 `abiFilters`, and `QUEST` would win because its block runs second.
 
-Heads-up on an upstream quirk found while validating this (**not** introduced by
-this fork, and deliberately left alone): upstream's `AMAZON` block uses
-`abiFilters += listOf("armeabi-v7a", "arm64-v8a")`, and because of the
-plugin-apply ordering described above, that union does not actually drop
-`x86_64`. Amazon APKs therefore still carry an x86_64 slice. Fire TV devices are
-all ARM so this is wasted size rather than a functional problem. Fixing it would
-mean changing upstream behaviour, which is out of scope here — but if you want
-your private Fire Stick builds slimmer, adding `abiFilters.clear()` to that block
-is the same one-line fix used in the `QUEST` block.
+**This fork patches upstream's `AMAZON` block.** Upstream uses
+`abiFilters += listOf("armeabi-v7a", "arm64-v8a")`, which — because of the
+plugin-apply ordering described above — does not actually drop `x86_64`, so
+stock Amazon APKs ship a dead x86_64 slice. This fork adds `abiFilters.clear()`
+there, which drops x86_64 and cuts the Fire TV APK from **256.7 MB to 169.4 MB**
+(measured; `native-code: 'arm64-v8a' 'armeabi-v7a'`, `versionCode` still 3146).
+Every Fire TV device is ARM, so nothing is lost.
+
+This is the one place the fork deliberately changes upstream *behaviour* rather
+than just adding to it, so it is the one change worth re-checking after a
+rebase. It is still an insertion (`+6, -0`) and sits directly above the line it
+modifies the effect of.
 
 ## What Horizon OS actually needed
 
@@ -208,6 +237,27 @@ Quest. That is left as-is deliberately: it is a reasonable fit for a large
 virtual panel, it keeps the fork's behaviour identical to upstream, and Settings
 already exposes a force-TV toggle if you want to experiment. See "Known
 considerations" below.
+
+## Verified on device
+
+Confirmed on a Quest 3 (`eureka`, Horizon OS on Android 14) over ADB:
+
+- Installs and launches; Plezy's sign-in screen (Plex / Jellyfin / Emby)
+  renders correctly in the panel.
+- `primaryCpuAbi=arm64-v8a`, `versionCode=4146`, `minSdk=25 targetSdk=36`.
+- The window manager reports `isResizeable=true supportsMultiWindow=true`
+  with `minWidth=480 minHeight=625` px — exactly the 384×500 dp from the
+  overlay at the headset's 1.25 density — and the panel opens at
+  `1140×938` px, which is the configured 912×750 dp. The `<layout>` bounds
+  are being honoured.
+- Horizon's `KeyboardInputMethodService` binds to the app, so the system
+  keyboard overlay (and its dictation mic) works — the payoff for staying a
+  2D panel app rather than declaring VR.
+- Renders through Adreno Vulkan. No fatals in logcat.
+- `adb shell pm list features` confirms Horizon exposes **no**
+  `android.hardware.touchscreen`, `leanback` or `television` feature, and does
+  expose `oculus.hardware.standalone_vr`. Device ABI list is
+  `arm64-v8a,armeabi-v7a,armeabi` — no x86, confirming the arm64-only APK.
 
 ## Known considerations
 
