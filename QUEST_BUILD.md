@@ -364,6 +364,30 @@ events, so Plezy's existing tap handling works untouched. Bluetooth gamepads
 pair with the headset and drive Plezy's existing D-pad/focus navigation with no
 Quest-specific code.
 
+### Thumbstick navigation (fixed)
+
+Quest Touch controllers report their thumbstick on the **right-stick** axes —
+`ABS_RX`/`ABS_RY`, surfaced to Android as `AXIS_RX`/`AXIS_RY`. Confirmed with
+`getevent` on a Quest 3: across a full stick sweep the controllers emit only
+`ABS_RX`/`ABS_RY` and **never** `ABS_X`/`ABS_Y`. They also expose no scroll
+wheel (`REL_WHEEL`/`REL_HWHEEL` are absent), so the stick is a joystick axis,
+not a scroll source.
+
+Two stacked gaps meant none of that reached the UI, which is why the stick could
+not scroll Home, Explore, or a library's Recommended rows:
+
+1. `universal_gamepad` 1.5.8 maps only `AXIS_X`, `AXIS_Y`, `AXIS_Z` and
+   `AXIS_RZ`. `AXIS_RX`/`AXIS_RY` were dropped in the plugin before ever
+   reaching Dart. Fixed in `packages/universal_gamepad`, vendored the same way
+   upstream already vendors `saf_util`.
+2. `GamepadService._handleAxis` only acted on `leftStickX`/`leftStickY`, with
+   every other axis hitting `default: break`. It now routes the right stick
+   through the same handlers, so either stick navigates.
+
+Both halves are needed; either alone leaves the stick dead. Confirmed by
+Plezy's own gamepad diagnostics (`--dart-define=PLEZY_TEXT_INPUT_DIAGNOSTICS=true`)
+logging nothing at all during 45 seconds of stick movement before the fix.
+
 Note that Horizon reports **no touchscreen**, and Plezy's `TvDetection`
 (`android/app/src/main/kotlin/com/edde746/plezy/TvDetection.kt`) counts absence
 of a touchscreen as a TV signal — so Plezy renders its **TV/10-foot UI** on
@@ -421,12 +445,19 @@ the equivalent affordance by letting you resize and park the panel.
 ## Files this fork adds
 
 ```
-android/quest/build.gradle.kts             # code-free library module
-android/quest/src/main/AndroidManifest.xml # the Horizon panel overlay
-lib/quest/quest_platform.dart              # Quest/Horizon device detection
-test/quest/quest_platform_test.dart        # tests for the above
-QUEST_BUILD.md                             # this file
-.questenv                                  # toolchain environment
+android/quest/build.gradle.kts                  # code-free panel-overlay module
+android/quest/src/main/AndroidManifest.xml      # the Horizon panel overlay
+android/selfupdate/build.gradle.kts             # code-free permission module
+android/selfupdate/src/main/AndroidManifest.xml # REQUEST_INSTALL_PACKAGES
+lib/quest/quest_platform.dart                   # Quest/Horizon device detection
+lib/selfupdate/self_update_target.dart          # target + release-asset selection
+lib/selfupdate/apk_self_updater.dart            # download + hand to the installer
+packages/universal_gamepad/                     # vendored 1.5.8 + AXIS_RX/RY fix
+test/quest/quest_platform_test.dart
+test/selfupdate/self_update_target_test.dart
+test/services/gamepad_right_stick_quest_test.dart
+QUEST_BUILD.md                                  # this file
+.questenv                                       # toolchain environment
 ```
 
 ## Upstream files this fork modifies
@@ -434,10 +465,23 @@ QUEST_BUILD.md                             # this file
 Both changes are pure insertions guarded by `System.getenv("QUEST")`, so the
 default and Amazon builds are byte-identical to upstream.
 
-- `android/settings.gradle.kts` — `include(":quest")` (+3, -0)
+- `android/settings.gradle.kts` — `include(":quest")` and `include(":selfupdate")`
 - `android/app/build.gradle.kts` — the `QUEST` block mirroring the existing
-  `AMAZON` block, and the conditional `implementation(project(":quest"))`
-  (+23, -0)
+  `AMAZON` block, `abiFilters.clear()` in the `AMAZON` block, and the two
+  conditional module dependencies
+- `pubspec.yaml` — points `universal_gamepad` at the vendored copy, exactly as
+  upstream already does for `saf_util`
+- `lib/services/gamepad_service.dart` — routes the right stick through the
+  existing navigation handlers
+- `lib/services/update_service.dart` — repo and appcast URL become
+  `String.fromEnvironment` with upstream's values as defaults
+- `lib/utils/update_dialog.dart` — the primary button tries the self-updater
+  before falling back to upstream's browser path
+- `README.md` — the GPLv3 §5a "modified version" notice
+
+Only `gamepad_service.dart` and the `AMAZON` `abiFilters.clear()` change
+upstream *behaviour*; the rest either add new code paths or preserve upstream
+defaults exactly. Those two are the ones to re-check after a rebase.
 
 ### Why not product flavors?
 
