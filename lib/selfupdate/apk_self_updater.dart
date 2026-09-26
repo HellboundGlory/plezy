@@ -30,6 +30,14 @@ const String apkMimeType = 'application/vnd.android.package-archive';
 /// opening the release page in a browser for every one of these.
 enum SelfUpdateFailure { notSupported, noAsset, downloadFailed, installLaunchFailed }
 
+/// What the update is doing right now, so the UI can say so.
+///
+/// The APKs are 95-170 MB, and on a headset that is long enough that a button
+/// which merely stays pressed reads as broken. [resolving] and
+/// [launchingInstaller] are both short but neither is instant, so every phase
+/// gets its own label rather than sharing one spinner.
+enum SelfUpdatePhase { resolving, downloading, launchingInstaller }
+
 class SelfUpdateResult {
   const SelfUpdateResult.started() : failure = null;
   const SelfUpdateResult.failed(this.failure);
@@ -49,14 +57,21 @@ class ApkSelfUpdater {
   ///
   /// [repo] is `owner/name`. [client] and [downloader] are injectable so the
   /// flow can be tested without network or platform channels.
+  ///
+  /// [onPhase] fires on every phase change and [onProgress] on download
+  /// progress as a 0..1 fraction. Both are optional: a caller that passes
+  /// neither gets exactly the old fire-and-await behaviour.
   static Future<SelfUpdateResult> downloadAndInstall({
     required String repo,
     MediaServerHttpClient? client,
     FileDownloader? downloader,
+    void Function(SelfUpdatePhase phase)? onPhase,
+    void Function(double progress)? onProgress,
   }) async {
     final target = selfUpdateTarget;
     if (target == null) return const SelfUpdateResult.failed(SelfUpdateFailure.notSupported);
 
+    onPhase?.call(SelfUpdatePhase.resolving);
     final assetUrl = await _resolveAssetUrl(repo: repo, target: target, client: client);
     if (assetUrl == null) return const SelfUpdateResult.failed(SelfUpdateFailure.noAsset);
 
@@ -71,8 +86,20 @@ class ApkSelfUpdater {
       retries: 2,
     );
 
+    onPhase?.call(SelfUpdatePhase.downloading);
     try {
-      final result = await fileDownloader.download(task);
+      final result = await fileDownloader.download(
+        task,
+        // background_downloader signals paused/retrying/failed as negative
+        // sentinels on the same callback (progressWaitingToRetry is -4.0).
+        // Forwarding those verbatim would render as "-400%", so anything
+        // outside 0..1 is dropped and the UI holds its last real reading.
+        onProgress: onProgress == null
+            ? null
+            : (progress) {
+                if (progress >= 0 && progress <= 1) onProgress(progress);
+              },
+      );
       if (result.status != TaskStatus.complete) {
         appLogger.w('Self-update download ended as ${result.status}');
         return const SelfUpdateResult.failed(SelfUpdateFailure.downloadFailed);
@@ -82,6 +109,7 @@ class ApkSelfUpdater {
       return const SelfUpdateResult.failed(SelfUpdateFailure.downloadFailed);
     }
 
+    onPhase?.call(SelfUpdatePhase.launchingInstaller);
     try {
       final launched = await fileDownloader.openFile(task: task, mimeType: apkMimeType);
       if (!launched) return const SelfUpdateResult.failed(SelfUpdateFailure.installLaunchFailed);
