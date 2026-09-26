@@ -364,29 +364,27 @@ events, so Plezy's existing tap handling works untouched. Bluetooth gamepads
 pair with the headset and drive Plezy's existing D-pad/focus navigation with no
 Quest-specific code.
 
-### Thumbstick navigation (fixed)
+### Scrolling with the controller (fixed)
 
-Quest Touch controllers report their thumbstick on the **right-stick** axes —
-`ABS_RX`/`ABS_RY`, surfaced to Android as `AXIS_RX`/`AXIS_RY`. Confirmed with
-`getevent` on a Quest 3: across a full stick sweep the controllers emit only
-`ABS_RX`/`ABS_RY` and **never** `ABS_X`/`ABS_Y`. They also expose no scroll
-wheel (`REL_WHEEL`/`REL_HWHEEL` are absent), so the stick is a joystick axis,
-not a scroll source.
+Horizon does **not** deliver controller input to a 2D panel as joystick or touch
+events. Captured at the window callback on a Quest 3: the thumbstick and
+trigger-drag both arrive as a *synthesized mouse wheel* —
+`ACTION_SCROLL`, `SOURCE_MOUSE` (0x2), `deviceId=-1` — in many small deltas of
+about 0.28 wheel clicks, carrying `AXIS_VSCROLL` and `AXIS_HSCROLL`. No
+`SOURCE_JOYSTICK` events reach the app at all, and no touch events either.
 
-Two stacked gaps meant none of that reached the UI, which is why the stick could
-not scroll Home, Explore, or a library's Recommended rows:
+That broke vertical scrolling on Home, Explore and a library's Recommended tab,
+all of which render through `TvBrowseRail`. Its vertical hub list is
+`NeverScrollableScrollPhysics` and is scrolled programmatically off focus —
+correct for a remote, but it refuses the wheel. The horizontal hub rows keep
+normal physics, which is why sideways scrolling always worked, and D-pad worked
+because focus movement scrolls the controller directly.
 
-1. `universal_gamepad` 1.5.8 maps only `AXIS_X`, `AXIS_Y`, `AXIS_Z` and
-   `AXIS_RZ`. `AXIS_RX`/`AXIS_RY` were dropped in the plugin before ever
-   reaching Dart. Fixed in `packages/universal_gamepad`, vendored the same way
-   upstream already vendors `saf_util`.
-2. `GamepadService._handleAxis` only acted on `leftStickX`/`leftStickY`, with
-   every other axis hitting `default: break`. It now routes the right stick
-   through the same handlers, so either stick navigates.
-
-Both halves are needed; either alone leaves the stick dead. Confirmed by
-Plezy's own gamepad diagnostics (`--dart-define=PLEZY_TEXT_INPUT_DIAGNOSTICS=true`)
-logging nothing at all during 45 seconds of stick movement before the fix.
+The fix adds a `Listener` over that list which accumulates vertical wheel delta
+and calls the rail's existing `_moveHub()` once it adds up to a hub. Going
+through `_moveHub` rather than the scroll controller keeps focus, backdrop
+artwork and scroll position in step. It is inert on a real TV, which never
+emits pointer scroll.
 
 Note that Horizon reports **no touchscreen**, and Plezy's `TvDetection`
 (`android/app/src/main/kotlin/com/edde746/plezy/TvDetection.kt`) counts absence
@@ -452,10 +450,8 @@ android/selfupdate/src/main/AndroidManifest.xml # REQUEST_INSTALL_PACKAGES
 lib/quest/quest_platform.dart                   # Quest/Horizon device detection
 lib/selfupdate/self_update_target.dart          # target + release-asset selection
 lib/selfupdate/apk_self_updater.dart            # download + hand to the installer
-packages/universal_gamepad/                     # vendored 1.5.8 + AXIS_RX/RY fix
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
-test/services/gamepad_right_stick_quest_test.dart
 QUEST_BUILD.md                                  # this file
 .questenv                                       # toolchain environment
 ```
@@ -469,17 +465,16 @@ default and Amazon builds are byte-identical to upstream.
 - `android/app/build.gradle.kts` — the `QUEST` block mirroring the existing
   `AMAZON` block, `abiFilters.clear()` in the `AMAZON` block, and the two
   conditional module dependencies
-- `pubspec.yaml` — points `universal_gamepad` at the vendored copy, exactly as
-  upstream already does for `saf_util`
-- `lib/services/gamepad_service.dart` — routes the right stick through the
-  existing navigation handlers
+- `lib/widgets/tv_browse_rail.dart` — a `Listener` that turns Horizon's
+  synthesized mouse wheel into hub movement (see "Scrolling with the
+  controller")
 - `lib/services/update_service.dart` — repo and appcast URL become
   `String.fromEnvironment` with upstream's values as defaults
 - `lib/utils/update_dialog.dart` — the primary button tries the self-updater
   before falling back to upstream's browser path
 - `README.md` — the GPLv3 §5a "modified version" notice
 
-Only `gamepad_service.dart` and the `AMAZON` `abiFilters.clear()` change
+Only `tv_browse_rail.dart` and the `AMAZON` `abiFilters.clear()` change
 upstream *behaviour*; the rest either add new code paths or preserve upstream
 defaults exactly. Those two are the ones to re-check after a rebase.
 
