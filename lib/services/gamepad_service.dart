@@ -217,8 +217,6 @@ class GamepadService with WindowListener {
 
   TraversalDirection? _leftStickYLatch;
   TraversalDirection? _leftStickXLatch;
-  TraversalDirection? _rightStickYLatch;
-  TraversalDirection? _rightStickXLatch;
 
   final Set<GamepadButton> _pressedButtons = {};
   final Set<GamepadButton> _suppressedButtons = {};
@@ -331,8 +329,6 @@ class GamepadService with WindowListener {
     // Reset analog stick state so re-focus doesn't inherit stale direction
     _leftStickYLatch = null;
     _leftStickXLatch = null;
-    _rightStickYLatch = null;
-    _rightStickXLatch = null;
   }
 
   void _registerNativeKeyHandler() {
@@ -565,25 +561,6 @@ class GamepadService with WindowListener {
         _leftStickXLatch = _latchStickAxis(
           event.value,
           _leftStickXLatch,
-          negative: TraversalDirection.left,
-          positive: TraversalDirection.right,
-        );
-      // The right stick navigates identically to the left. Quest Touch
-      // controllers report their only thumbstick on the right-stick axes
-      // (AXIS_RX/AXIS_RY), so without this the headset has no stick
-      // navigation at all; on a conventional pad it just means either stick
-      // works, which is what most TV apps do anyway.
-      case GamepadAxis.rightStickY:
-        _rightStickYLatch = _latchStickAxis(
-          event.value,
-          _rightStickYLatch,
-          negative: TraversalDirection.up,
-          positive: TraversalDirection.down,
-        );
-      case GamepadAxis.rightStickX:
-        _rightStickXLatch = _latchStickAxis(
-          event.value,
-          _rightStickXLatch,
           negative: TraversalDirection.left,
           positive: TraversalDirection.right,
         );
