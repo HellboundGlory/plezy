@@ -1,0 +1,52 @@
+<!-- Quest / Horizon OS manifest overlay.
+
+     Merged into the app manifest only for QUEST=1 builds. Everything here is
+     ADDITIVE: the merger fills in attributes the app manifest does not declare
+     and leaves every attribute it does declare alone, so upstream stays
+     authoritative for anything it has an opinion about.
+
+     Deliberately NOT declared, because they would turn this into an immersive
+     app rather than a 2D panel app:
+       - <category android:name="com.oculus.intent.category.VR" />
+       - <uses-feature android:name="android.hardware.vr.headtracking" />
+       - com.oculus.vr.focusaware / passthrough metadata
+     A plain MAIN/LAUNCHER activity is what earns the native Horizon window
+     affordances (snap points, move/scale, minimize/close) and, importantly, the
+     system keyboard overlay with its dictation mic. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Horizon OS has no touchscreen; the controller raycast and hand-tracking
+         pinch arrive as pointer events. Upstream already declares this
+         required="false", so this is a belt-and-braces restatement that keeps
+         the Quest build correct even if upstream ever drops the line. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- Quest is GLES 3.2 hardware and Flutter's renderer needs GLES 3. -->
+    <uses-feature android:glEsVersion="0x00030001" />
+
+    <application>
+        <!-- Store-side device compatibility gating. Inert for sideloaded builds,
+             but required if this is ever uploaded to the Horizon Store. -->
+        <meta-data
+            android:name="com.oculus.supportedDevices"
+            android:value="quest2|questpro|quest3|quest3s" />
+
+        <!-- Attribute-level merge into the app's own <activity> node. The app
+             manifest declares neither resizeableActivity nor <layout>, so both
+             land without conflicting with upstream. -->
+        <activity
+            android:name="com.edde746.plezy.MainActivity"
+            android:resizeableActivity="true"
+            tools:node="merge">
+            <!-- Horizon panel bounds are min 384x500dp / max 1440x1000dp.
+                 912x750dp is the midpoint and is what Horizon opens the panel
+                 at before the user snaps or resizes it. -->
+            <layout
+                android:defaultWidth="912dp"
+                android:defaultHeight="750dp"
+                android:minWidth="384dp"
+                android:minHeight="500dp" />
+        </activity>
+    </application>
+</manifest>
