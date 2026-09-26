@@ -262,7 +262,7 @@ The versions the build pins (`android/app/build.gradle.kts`):
 
 | Component | Version |
 | --- | --- |
-| Flutter | 3.47.2 stable (Dart 3.13.2) |
+| Flutter | 3.47.1 stable — what upstream CI pins (`FLUTTER_VERSION` in `.github/workflows/build.yml`) |
 | JDK | **21** — Gradle/AGP reject 25 |
 | Android platform | android-36 |
 | Build tools | 36.1.0 |
@@ -271,7 +271,7 @@ The versions the build pins (`android/app/build.gradle.kts`):
 
 ```bash
 export PATH=/home/james/flutter/bin:/home/james/Android/Sdk/platform-tools:$PATH
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+export JAVA_HOME=/home/james/.local/jdk/jdk-21.0.12.1+1
 export ANDROID_HOME=/home/james/Android/Sdk
 export ANDROID_SDK_ROOT=/home/james/Android/Sdk
 ```
@@ -328,10 +328,11 @@ This machine already has a keystore set up for the fork:
 
 | | |
 | --- | --- |
-| Keystore | `~/.keystores/plezy-quest.jks` |
+| Keystore | `~/.keystores/plezy-quest.jks` (PKCS12, RSA 4096) |
 | Alias | `plezy-quest` |
-| Password (store and key) | `plezyquest` |
-| Validity | 10000 days |
+| Password (store and key) | only in `android/key.properties` |
+| Validity | 36500 days |
+| Cert SHA-256 | `f54a9330…c235640b` |
 
 and `android/key.properties` points at it. Both `key.properties` and `*.jks`
 are already in upstream's `android/.gitignore`, so neither is committed — which
@@ -339,20 +340,16 @@ also means **the keystore is not backed up by git**. Copy it somewhere safe; if
 you lose it you cannot upgrade an existing install in place, only uninstall and
 reinstall.
 
-To recreate it from scratch:
+To recreate it from scratch (this forces every install to uninstall once —
+see [Signing must not change](#signing-must-not-change)):
 
 ```bash
-keytool -genkeypair -v -keystore ~/.keystores/plezy-quest.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias plezy-quest \
-  -storepass plezyquest -keypass plezyquest \
-  -dname "CN=Plezy Quest Fork, OU=Private, O=HellboundGlory, C=GB"
-
-cat > android/key.properties <<'EOF'
-storeFile=/home/james/.keystores/plezy-quest.jks
-storePassword=plezyquest
-keyAlias=plezy-quest
-keyPassword=plezyquest
-EOF
+P=$(openssl rand -base64 24 | tr -d '/+=')
+keytool -genkeypair -keystore ~/.keystores/plezy-quest.jks -storetype PKCS12 \
+  -alias plezy-quest -keyalg RSA -keysize 4096 -validity 36500 \
+  -storepass "$P" -keypass "$P" -dname "CN=Hellbound, O=HellboundGlory"
+printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=plezy-quest\nkeyPassword=%s\n' \
+  ~/.keystores/plezy-quest.jks "$P" "$P" > android/key.properties
 ```
 
 The same keystore signs the Fire TV build, so both targets share one identity.
@@ -498,6 +495,11 @@ only the reasoning behind the version scheme.
 
 An APK signed with a different key cannot upgrade an existing install. Keep
 using `~/.keystores/plezy-quest.jks` for every release, for both targets.
+
+This has happened once: the original key (cert `2024…71d2`, used through
+2.19.1.1) was lost, and 2.21.0.1 is the first release signed with its
+replacement (`f54a…640b`). Installs older than 2.21.0.1 cannot self-update past
+that point; they must be uninstalled and 2.21.0.1 installed fresh.
 
 ### Licensing note
 
