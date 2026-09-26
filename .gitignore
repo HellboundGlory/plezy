@@ -76,3 +76,6 @@ maestro/**/*.png
 
 server/deploy.sh
 server/Caddyfile
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
