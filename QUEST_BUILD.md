@@ -208,26 +208,48 @@ accordingly or the app will not find its update:
 
 ### Cutting a release
 
+#### Version the fork with a fourth component
+
 `UpdateService` compares the release **tag** against the installed
-`versionName`, so tag with the plain version and bump `pubspec.yaml` first.
-`versionCode` must also increase for Android to accept the upgrade — the
-`+4000` / `+3000` offsets are derived from the pubspec build number, so bumping
-it covers both.
+`versionName`, and `_parseVersionParts` splits on `.`, pads missing components
+with `0`, and ignores `+`/`-` suffixes. That makes
+`<upstream version>.<fork revision>` the right scheme:
+
+| Release | Parses as | Result |
+| --- | --- | --- |
+| fork `2.17.1.1` vs installed `2.17.1` | `[2,17,1,1] > [2,17,1,0]` | update offered |
+| fork `2.17.1.1` vs upstream's later `2.17.2` | `[2,17,1,1] < [2,17,2,0]` | upstream supersedes |
+
+So the fork never collides with, or jumps ahead of, an upstream version.
+Releasing as plain `2.17.2` would burn a number upstream is going to use, and a
+later rebase onto upstream's real 2.17.2 would produce a build the fork's own
+users could not be offered.
+
+**Do not bump `version:` in `pubspec.yaml`.** Upstream changes that line every
+release, so editing it means a rebase conflict every time. Pass the version at
+build time instead:
 
 ```bash
-# 1. bump `version:` in pubspec.yaml, e.g. 2.17.2+147, and commit
+--build-name=2.17.1.1 --build-number=147
+```
 
-# 2. build both targets (see flags above), copying each out
-cp build/app/outputs/flutter-apk/app-release.apk \
-   ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.2-arm64.apk
-cp build/app/outputs/flutter-apk/app-release.apk \
-   ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.2.apk
+`versionCode` must still increase for Android to accept an upgrade. It is
+derived from `--build-number` plus the `+4000` / `+3000` offset, so always pass
+a build number higher than the last one you shipped — if upstream's build number
+has raced past yours, take whichever is larger.
 
-# 3. publish
-gh release create v2.17.2 \
-  ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.2-arm64.apk \
-  ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.2.apk \
-  --title "v2.17.2" --notes "..."
+```bash
+# 1. build both targets with the fork version (see flags above), copying each out
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.1.1-arm64.apk
+cp build/app/outputs/flutter-apk/app-release.apk \
+   ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.1.1.apk
+
+# 2. publish. The tag must equal the versionName the APKs were built with.
+gh release create v2.17.1.1 \
+  ~/Downloads/Projects/plezy-apks/plezy-quest-2.17.1.1-arm64.apk \
+  ~/Downloads/Projects/plezy-apks/plezy-firetv-2.17.1.1.apk \
+  --title "v2.17.1.1" --notes "..."
 ```
 
 Installed builds pick it up within 6 hours, or immediately via
