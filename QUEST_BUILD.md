@@ -256,6 +256,33 @@ takes.
   `arm64-v8a`) and `plezy-firetv-2.18.0.1.apk` (169.6 MB, versionCode 3148,
   `arm64-v8a armeabi-v7a`), both signed `2024…71d2`, matching 2.17.1.1.
 
+### The sync that produced 2.22.0.1
+
+The second worked example, recorded because it differed from the first in three
+ways.
+
+- **Upstream:** 193 commits, 420 files, `2.21.0` → `2.22.0`. Upstream `main` was
+  4 commits past the `2.22.0` tag, so the sync targeted the **tag**
+  (`git merge --ff-only 2.22.0`), not `upstream/main`: the fork releases only
+  what upstream released.
+- **Conflict prediction was non-empty and the rebase was still clean.** The
+  `comm` check printed `lib/services/update_service.dart`,
+  `lib/widgets/tv_browse_rail.dart` and `README.md` — three of the six — yet all
+  13 fork commits applied without a conflict, because upstream's edits and the
+  fork's insertions sat in different hunks. A printed filename means "check this
+  by eye", not "expect a conflict". The by-eye check passed: the `Listener` in
+  `tv_browse_rail.dart`, the `fromEnvironment` values in `update_service.dart`,
+  `SelfUpdateActionButton` in `update_dialog.dart`, both `abiFilters.clear()`
+  hits and both `include()` lines were all present.
+- **The build number collided again.** Upstream's `2.22.0+152` equals the
+  `4152` / `3152` the fork shipped as 2.21.0.1, so the release is build `153`.
+  Two syncs in a row have hit this; always run the step 4 comparison.
+- **Verification:** 29 fork tests pass.
+- **Artifacts:** `plezy-quest-2.22.0.1-arm64.apk` (95.9 MB, versionCode 4153,
+  `arm64-v8a`) and `plezy-firetv-2.22.0.1.apk` (173.6 MB, versionCode 3153,
+  `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.21.0.1.
+  Published as `v2.22.0.1`.
+
 ## Toolchain
 
 The versions the build pins (`android/app/build.gradle.kts`):
