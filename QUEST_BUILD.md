@@ -5,9 +5,8 @@ Spatial SDK, no VR intent category. Horizon runs it as an ordinary resizable
 Android window, which is what gives it snap points, move/scale, minimize/close
 and the system keyboard overlay (including the dictation mic) for free.
 
-The fork is built to stay close to upstream. Six upstream files are touched, by
-197 added and 14 replaced lines; everything else lives in new files upstream has
-no path for. That is what keeps the sync a clean rebase — see
+The fork is built to stay close to upstream. Eight upstream files are touched;
+everything else lives in new files upstream has no path for. That is what keeps the sync a clean rebase — see
 [Shipping an upstream update](#shipping-an-upstream-update) and
 [Upstream files this fork modifies](#upstream-files-this-fork-modifies).
 
@@ -44,8 +43,8 @@ the things to re-check on device.
 
 ### 2. Predict the rebase before you start it
 
-The fork touches six upstream files. A conflict is possible only where upstream
-edited one of those same six, so ask git directly:
+The fork touches eight upstream files. A conflict is possible only where upstream
+edited one of those same eight, so ask git directly:
 
 ```bash
 comm -12 <(git diff --name-only main..upstream/main | sort) \
@@ -750,7 +749,7 @@ QUEST_BUILD.md                                  # this file
 
 ## Upstream files this fork modifies
 
-Six files, and this list is the conflict surface for every upstream sync — step
+Eight files, and this list is the conflict surface for every upstream sync — step
 2 of [Shipping an upstream update](#shipping-an-upstream-update) is just asking
 whether upstream touched any of them. The Gradle changes are insertions guarded
 by `System.getenv("QUEST")`, so the default Play build stays byte-identical to
@@ -768,10 +767,27 @@ upstream.
 - `lib/utils/update_dialog.dart` — sideload builds swap in
   `SelfUpdateActionButton`; upstream's button is untouched on the `else`
 - `README.md` — the GPLv3 §5a "modified version" notice
+- `lib/providers/discover_provider.dart` — Home skips its load and its
+  Continue Watching refresh while a profile bind is running, and gains
+  `stopWaitingForBinding()`. See "Continue Watching after a profile switch".
+- `lib/screens/main_screen.dart` — the 15s bind-settle fallback calls
+  `stopWaitingForBinding()` so a hung bind can't leave Home on its skeleton
 
-Only `tv_browse_rail.dart` and the `AMAZON` `abiFilters.clear()` change
-upstream *behaviour*; the rest either add new code paths or preserve upstream
-defaults exactly. Those two are the ones to re-check after a rebase.
+`tv_browse_rail.dart`, the `AMAZON` `abiFilters.clear()` and the
+`discover_provider.dart` gate change upstream *behaviour*; the rest either add
+new code paths or preserve upstream defaults exactly. Those three are the ones
+to re-check after a rebase. Drop the `discover_provider.dart` and
+`main_screen.dart` changes once upstream fixes the bug itself.
+
+### Continue Watching after a profile switch
+
+Upstream bug, fixed only in this fork. A profile switch remounts Home while the
+binder is still swapping the server clients' tokens, so Home's first load ran
+with the previous profile's token and showed that profile's Continue Watching.
+The follow-up load MainScreen primes when the bind settles was skipped whenever
+that first load was still running, and a same-server switch never looks like a
+new server, so nothing else refetched. Home now waits for the bind to settle
+before it fetches.
 
 ### Why not product flavors?
 
