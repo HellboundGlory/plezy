@@ -42,6 +42,7 @@ import '../providers/catalog_sources_provider.dart';
 import '../providers/account_preferences_controller.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
+import '../providers/discover_provider.dart';
 import '../providers/hidden_libraries_provider.dart';
 import '../providers/libraries_provider.dart';
 import '../providers/playback_state_provider.dart';
@@ -665,6 +666,7 @@ class _MainScreenState extends State<MainScreen>
           'ActiveProfileBinder still binding after ${_startupSettleFallback.inSeconds}s '
           '— priming UI anyway so the user is not stuck on an empty screen.',
         );
+        context.read<DiscoverProvider>().stopWaitingForBinding();
       }
       // Set the guard before the await so re-entrant listener fires can't
       // race a second prime.

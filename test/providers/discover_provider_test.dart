@@ -804,6 +804,57 @@ void main() {
     expect(binderProvider.errorMessage, isNotNull);
   });
 
+  test('load waits out a profile bind instead of fetching with the previous profile\'s clients', () async {
+    aggregation.onDeckResult = () => [_item('previous-profile')];
+    aggregation.hubsResult = () => [_hub('previous-hub')];
+
+    isBinding = true;
+    await provider.load();
+    expect(aggregation.onDeckCalls, 0);
+    expect(aggregation.hubCalls, 0);
+    expect(provider.isLoading, isTrue);
+
+    isBinding = false;
+    aggregation.onDeckResult = () => [_item('new-profile')];
+    await provider.load();
+    expect(provider.onDeck.map((i) => i.id), ['new-profile']);
+  });
+
+  test('a load skipped for a same-profile rebind leaves loaded content showing', () async {
+    aggregation.onDeckResult = () => [_item('a')];
+    await provider.load();
+
+    isBinding = true;
+    await provider.load();
+
+    expect(provider.isLoading, isFalse);
+    expect(provider.areHubsLoading, isFalse);
+    expect(provider.onDeck.map((i) => i.id), ['a']);
+  });
+
+  test('load fetches during a hung bind once told to stop waiting for it', () async {
+    aggregation.onDeckResult = () => [_item('a')];
+    isBinding = true;
+
+    provider.stopWaitingForBinding();
+    await provider.load();
+
+    expect(provider.onDeck.map((i) => i.id), ['a']);
+    expect(provider.isLoading, isFalse);
+  });
+
+  test('refreshContinueWatching does not fetch while a profile bind is running', () async {
+    aggregation.onDeckResult = () => [_item('a')];
+    await provider.load();
+
+    isBinding = true;
+    aggregation.onDeckResult = () => [_item('previous-profile')];
+    await provider.refreshContinueWatching();
+
+    expect(aggregation.onDeckCalls, 1);
+    expect(provider.onDeck.map((i) => i.id), ['a']);
+  });
+
   // A pass in which zero servers succeeded is never authoritative: it must
   // not wipe existing content, and it may only commit "loaded, empty" when
   // the failure is settled (no cancellations, binder not running). The

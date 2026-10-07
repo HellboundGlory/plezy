@@ -232,6 +232,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
   DiscoverRefreshOutcome _lastOutcome = DiscoverRefreshOutcome.cancelled;
   Future<void>? _continueWatchingRefreshFuture;
   bool _continueWatchingRefreshQueued = false;
+  bool _ignoreBinding = false;
 
   Set<String> _lastSeenHiddenKeys = {};
   List<String> _lastSeenLibraryOrderKeys = const [];
@@ -316,6 +317,10 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
   /// uses this to skip a prime that would only duplicate the load the screen
   /// started in `initState`.
   bool get isLoadInFlight => _loadCoordinator.isBusy;
+
+  void stopWaitingForBinding() => _ignoreBinding = true;
+
+  bool get _isWaitingForBinding => !_ignoreBinding && isProfileBinding();
 
   /// Starts a full reload when the committed hub list is older than
   /// [staleAfter]. Returns true while a full pass is running, queued, or was
@@ -408,7 +413,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
       // kicked off during build (the screen's initState) doesn't mark
       // listening widgets dirty mid-build.
       await null;
-      if (isDisposed) return;
+      if (isDisposed || _isWaitingForBinding) return;
       ++_contentRevision;
       appLogger.d('DiscoverProvider: loading content from all servers');
       _onDeckState = DiscoverLoadState.loading;
@@ -416,10 +421,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
       _errorMessage = null;
       safeNotifyListeners();
 
-      if (!_multiServer.hasConnectedServers) {
-        if (isProfileBinding()) return;
-        throw Exception('No servers available');
-      }
+      if (!_multiServer.hasConnectedServers) throw Exception('No servers available');
 
       await _hiddenLibraries.ensureInitialized();
       if (isDisposed) return;
@@ -799,7 +801,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
 
   Future<void> _refreshContinueWatchingOnce() async {
     try {
-      if (!_multiServer.hasConnectedServers) return;
+      if (_isWaitingForBinding || !_multiServer.hasConnectedServers) return;
       final revision = _contentRevision;
       final hiddenKeys = Set<String>.of(_hiddenLibraries.hiddenLibraryKeys);
       final observation = _beginObservation();
