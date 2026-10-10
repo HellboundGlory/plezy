@@ -59,6 +59,10 @@ surrounding code and re-add the fork's insertion.** Nothing under
 `test/quest/` or `test/selfupdate/` can ever appear here, because upstream has
 no such paths.
 
+One known exception is pending: once upstream releases d257d2ea1, the fork's
+profile-bind fix is replaced by it rather than replayed — see
+[Continue Watching after a profile switch](#continue-watching-after-a-profile-switch).
+
 ### 3. Fast-forward `main`, replay `quest`
 
 ```bash
@@ -776,8 +780,9 @@ upstream.
 `tv_browse_rail.dart`, the `AMAZON` `abiFilters.clear()` and the
 `discover_provider.dart` gate change upstream *behaviour*; the rest either add
 new code paths or preserve upstream defaults exactly. Those three are the ones
-to re-check after a rebase. Drop the `discover_provider.dart` and
-`main_screen.dart` changes once upstream fixes the bug itself.
+to re-check after a rebase. Upstream has fixed the bug itself (see below), so
+the sync that picks up that fix drops the `discover_provider.dart` and
+`main_screen.dart` changes, and this list goes back to six files.
 
 ### Continue Watching after a profile switch
 
@@ -788,6 +793,23 @@ The follow-up load MainScreen primes when the bind settles was skipped whenever
 that first load was still running, and a same-server switch never looks like a
 new server, so nothing else refetched. Home now waits for the bind to settle
 before it fetches.
+
+**Fixed upstream in d257d2ea1** ([edde746/plezy#2599](https://github.com/edde746/plezy/issues/2599),
+closed 2026-10-07), on `upstream/main` but not yet in a release. Upstream took
+the same approach without the `stopWaitingForBinding()` latch: its 15s fallback
+prime no longer disarms the settle prime, so a bind longer than 15s still loads
+Home with the new profile's token. On the sync that brings in a release
+containing d257d2ea1:
+
+- drop the fork's "fix(discover): wait for the profile bind before loading
+  Home" commit (e0dc0a5fd now; the hash changes with each rebase) with
+  `git rebase --skip` when it stops on it (if it replays without stopping,
+  revert it afterwards) and take upstream's
+  `discover_provider.dart`, `main_screen.dart` and test as they are
+- remove both files from the list above, this section, and the "eight files"
+  counts in this document
+- re-check on device: switch Plex Home profiles on the same server and confirm
+  Continue Watching shows the new profile's items
 
 ### Why not product flavors?
 
