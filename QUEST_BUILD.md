@@ -5,7 +5,7 @@ Spatial SDK, no VR intent category. Horizon runs it as an ordinary resizable
 Android window, which is what gives it snap points, move/scale, minimize/close
 and the system keyboard overlay (including the dictation mic) for free.
 
-The fork is built to stay close to upstream. Eight upstream files are touched;
+The fork is built to stay close to upstream. Six upstream files are touched;
 everything else lives in new files upstream has no path for. That is what keeps the sync a clean rebase — see
 [Shipping an upstream update](#shipping-an-upstream-update) and
 [Upstream files this fork modifies](#upstream-files-this-fork-modifies).
@@ -43,8 +43,8 @@ the things to re-check on device.
 
 ### 2. Predict the rebase before you start it
 
-The fork touches eight upstream files. A conflict is possible only where upstream
-edited one of those same eight, so ask git directly:
+The fork touches six upstream files. A conflict is possible only where upstream
+edited one of those same six, so ask git directly:
 
 ```bash
 comm -12 <(git diff --name-only main..upstream/main | sort) \
@@ -58,10 +58,6 @@ surrounding code and re-add the fork's insertion.** Nothing under
 `android/quest/`, `android/selfupdate/`, `lib/quest/`, `lib/selfupdate/`,
 `test/quest/` or `test/selfupdate/` can ever appear here, because upstream has
 no such paths.
-
-One known exception is pending: once upstream releases d257d2ea1, the fork's
-profile-bind fix is replaced by it rather than replayed — see
-[Continue Watching after a profile switch](#continue-watching-after-a-profile-switch).
 
 ### 3. Fast-forward `main`, replay `quest`
 
@@ -285,6 +281,35 @@ ways.
   `arm64-v8a`) and `plezy-firetv-2.22.0.1.apk` (173.6 MB, versionCode 3153,
   `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.21.0.1.
   Published as `v2.22.0.1`.
+
+### The sync that produced 2.23.0.1
+
+Recorded because it is the first sync that dropped a fork commit.
+
+- **Upstream:** 48 commits, `2.22.0` → `2.23.0`, synced to the tag. Among them
+  d257d2ea1, upstream's own fix for the profile-switch bug where Home showed
+  the previous Plex Home profile's Continue Watching. The fork had carried its
+  own fix for it since 2.22.0.2.
+- **Conflict prediction** printed `discover_provider.dart`, `main_screen.dart`
+  and `discover_provider_test.dart`: exactly the fork's fix, nothing else. The
+  fix commit was dropped from the rebase (a scripted `git rebase -i` deleting
+  its `pick` line) and the other 16 commits replayed clean. The fork is back to
+  six upstream files. When upstream fixes a bug the fork also fixed, drop the
+  fork's commit rather than resolving it against upstream's.
+- **A stale plugin build broke the first build.** Upstream repinned
+  `background_downloader`, and Gradle's incremental Kotlin compile of it failed
+  with `Unresolved reference 'ParallelDownloadTaskRunner'` although the class is
+  in the new checkout. `rm -rf build/background_downloader` fixed it. After any
+  sync that repins a git plugin, clear that plugin's folder under `build/` if
+  the build fails this way.
+- **Numbering:** upstream's `2.23.0+153` is below the `154` that 2.22.0.2
+  shipped, so the release is build `155`.
+- **Verification:** 29 fork tests pass, plus upstream's Home tests (90 with
+  `test/providers/discover_provider_test.dart`).
+- **Artifacts:** `plezy-quest-2.23.0.1-arm64.apk` (96.1 MB, versionCode 4155,
+  `arm64-v8a`) and `plezy-firetv-2.23.0.1.apk` (174.0 MB, versionCode 3155,
+  `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.22.0.2.
+  Published as `v2.23.0.1`.
 
 ## Toolchain
 
@@ -753,7 +778,7 @@ QUEST_BUILD.md                                  # this file
 
 ## Upstream files this fork modifies
 
-Eight files, and this list is the conflict surface for every upstream sync — step
+Six files, and this list is the conflict surface for every upstream sync — step
 2 of [Shipping an upstream update](#shipping-an-upstream-update) is just asking
 whether upstream touched any of them. The Gradle changes are insertions guarded
 by `System.getenv("QUEST")`, so the default Play build stays byte-identical to
@@ -771,45 +796,10 @@ upstream.
 - `lib/utils/update_dialog.dart` — sideload builds swap in
   `SelfUpdateActionButton`; upstream's button is untouched on the `else`
 - `README.md` — the GPLv3 §5a "modified version" notice
-- `lib/providers/discover_provider.dart` — Home skips its load and its
-  Continue Watching refresh while a profile bind is running, and gains
-  `stopWaitingForBinding()`. See "Continue Watching after a profile switch".
-- `lib/screens/main_screen.dart` — the 15s bind-settle fallback calls
-  `stopWaitingForBinding()` so a hung bind can't leave Home on its skeleton
 
-`tv_browse_rail.dart`, the `AMAZON` `abiFilters.clear()` and the
-`discover_provider.dart` gate change upstream *behaviour*; the rest either add
-new code paths or preserve upstream defaults exactly. Those three are the ones
-to re-check after a rebase. Upstream has fixed the bug itself (see below), so
-the sync that picks up that fix drops the `discover_provider.dart` and
-`main_screen.dart` changes, and this list goes back to six files.
-
-### Continue Watching after a profile switch
-
-Upstream bug, fixed only in this fork. A profile switch remounts Home while the
-binder is still swapping the server clients' tokens, so Home's first load ran
-with the previous profile's token and showed that profile's Continue Watching.
-The follow-up load MainScreen primes when the bind settles was skipped whenever
-that first load was still running, and a same-server switch never looks like a
-new server, so nothing else refetched. Home now waits for the bind to settle
-before it fetches.
-
-**Fixed upstream in d257d2ea1** ([edde746/plezy#2599](https://github.com/edde746/plezy/issues/2599),
-closed 2026-10-07), on `upstream/main` but not yet in a release. Upstream took
-the same approach without the `stopWaitingForBinding()` latch: its 15s fallback
-prime no longer disarms the settle prime, so a bind longer than 15s still loads
-Home with the new profile's token. On the sync that brings in a release
-containing d257d2ea1:
-
-- drop the fork's "fix(discover): wait for the profile bind before loading
-  Home" commit (e0dc0a5fd now; the hash changes with each rebase) with
-  `git rebase --skip` when it stops on it (if it replays without stopping,
-  revert it afterwards) and take upstream's
-  `discover_provider.dart`, `main_screen.dart` and test as they are
-- remove both files from the list above, this section, and the "eight files"
-  counts in this document
-- re-check on device: switch Plex Home profiles on the same server and confirm
-  Continue Watching shows the new profile's items
+`tv_browse_rail.dart` and the `AMAZON` `abiFilters.clear()` change upstream
+*behaviour*; the rest either add new code paths or preserve upstream defaults
+exactly. Those two are the ones to re-check after a rebase.
 
 ### Why not product flavors?
 
