@@ -5,7 +5,7 @@ Spatial SDK, no VR intent category. Horizon runs it as an ordinary resizable
 Android window, which is what gives it snap points, move/scale, minimize/close
 and the system keyboard overlay (including the dictation mic) for free.
 
-The fork is built to stay close to upstream. Six upstream files are touched;
+The fork is built to stay close to upstream. Seven upstream files are touched;
 everything else lives in new files upstream has no path for. That is what keeps the sync a clean rebase — see
 [Shipping an upstream update](#shipping-an-upstream-update) and
 [Upstream files this fork modifies](#upstream-files-this-fork-modifies).
@@ -43,8 +43,8 @@ the things to re-check on device.
 
 ### 2. Predict the rebase before you start it
 
-The fork touches six upstream files. A conflict is possible only where upstream
-edited one of those same six, so ask git directly:
+The fork touches seven upstream files. A conflict is possible only where upstream
+edited one of those same seven, so ask git directly:
 
 ```bash
 comm -12 <(git diff --name-only main..upstream/main | sort) \
@@ -218,6 +218,23 @@ gh release create v$VER \
   --notes "Rebased on upstream 2.18.0. <upstream highlights from step 1>"
 ```
 
+### 7b. Build and attach the Windows installer
+
+Once the release exists, run the **Fork Windows release** workflow on GitHub
+(Actions tab, or the command below) with the tag and the same build number as
+the APKs:
+
+```bash
+gh workflow run fork-windows.yml --repo HellboundGlory/plezy --ref quest \
+  -f tag=v$VER -f build_number=$NUM
+```
+
+It builds x64 and ARM64, packs them into one `plezy-windows-installer.exe`,
+signs it with the fork's WinSparkle key, attaches it to the release and
+rewrites `appcast.xml` on the fork's `appcast` branch. Installed Windows copies
+read that appcast and update in place. See
+[Windows build](#windows-build).
+
 ### 8. Confirm the update lands
 
 Installed builds poll on a 6-hour cooldown, so force it: **Settings → Check for
@@ -310,6 +327,32 @@ Recorded because it is the first sync that dropped a fork commit.
   `arm64-v8a`) and `plezy-firetv-2.23.0.1.apk` (174.0 MB, versionCode 3155,
   `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.22.0.2.
   Published as `v2.23.0.1`.
+
+### The sync that produced 2.24.0.1
+
+Recorded because it is the first sync where the rebase itself conflicted, and
+the first release with a Windows installer.
+
+- **Upstream:** 101 commits, `2.23.0` → `2.24.0`, synced to the tag. For these
+  targets: Android now plays through mpv-build's mpv-android AAR instead of the
+  in-project `:libmpv` module (#2719), TV Home and library sizing changed, hub
+  cards are reused, Live TV MPEG-2 decodes in hardware, and Watch Together moved
+  to Open Watch Party. Upstream also added a paid Supporter unlock chosen by
+  `--dart-define=SUPPORTER_MODE`; the fork's builds leave it unset, which
+  compiles the perks out, the same as upstream's own GitHub APK.
+- **Conflicts:** `comm` printed both Gradle files, `tv_browse_rail.dart` and
+  `README.md`. The Gradle files conflicted for real, in the first fork commit,
+  because upstream replaced `include(":libmpv")` and
+  `implementation(project(":libmpv"))` with the AAR lines next to the fork's
+  insertions. Resolved by taking upstream's lines and re-adding the fork's
+  unchanged; the other 16 commits replayed clean.
+- **Numbering:** upstream's `2.24.0+155` equals the `155` that 2.23.0.1
+  shipped, so the release is build `156`.
+- **Verification:** 29 fork tests pass, plus 154 upstream rail and screen
+  tests.
+- **Artifacts:** `plezy-quest-2.24.0.1-arm64.apk` (97 MB, versionCode 4156,
+  `arm64-v8a`) and `plezy-firetv-2.24.0.1.apk` (174 MB, versionCode 3156,
+  `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.23.0.1.
 
 ## Toolchain
 
@@ -565,6 +608,62 @@ source that built them is the repo they are attached to. The README carries the
 "modified version" notice GPLv3 §5a requires. Do not publish builds from a
 private repo without also making that source available to recipients.
 
+## Windows build
+
+The Windows installer is upstream's Windows build with the update feed pointed
+at this fork. It carries none of the Android changes; it exists so Windows users
+can install and update from the same releases as the headset. Like the APKs, it
+leaves out upstream's release-only defines: no Sentry, no donation prompt
+(`ENABLE_DONATIONS`) and no Supporter perks (`SUPPORTER_MODE`). The workflow
+also patches the installer's "download the latest installer" link, in its copy
+of `windows/build-installer.ps1` only, to point at this fork.
+
+It is built only on GitHub Actions by `.github/workflows/fork-windows.yml`
+(Flutter cannot build Windows from Linux), started by hand after the release
+exists — [step 7b](#7b-build-and-attach-the-windows-installer).
+
+**Updates go through WinSparkle, not the APK updater.** An installed copy reads
+`appcast.xml` from the fork's `appcast` branch (`UPDATE_APPCAST_URL`), downloads
+the installer, checks its EdDSA signature against the public key in
+`windows/runner/Runner.rc`, and runs it silently. Only the installer is
+published: a portable copy falls back to the GitHub check, which could never
+match the fork's four-part tag against the exe's three-part version and would
+offer the update forever.
+
+The workflow fails before building if the tagged `Runner.rc` does not carry
+the fork's public key, and it never checks that the tag is newer than the one
+the appcast already serves: re-running it for an older tag rolls the appcast
+back, so run it only for the newest release.
+
+**The Windows version is three parts.** Flutter's Windows build parses
+`--build-name` as semver, and `2.24.0.1` is not semver: it silently falls back
+to `1.0.0+0`. The workflow therefore builds `--build-name=2.24.0
+--build-number=156`, giving `plezy.exe` file version `2.24.0.156`, and fails
+if the exe says anything else. WinSparkle compares that last number against
+`<sparkle:version>` in the appcast, so the build number alone has to rise with
+every release, which the APKs already require.
+
+**Same install as upstream.** The installer keeps upstream's Inno Setup
+`AppId`, so it installs over an existing upstream Plezy in place, keeping its
+settings; from then on that copy updates from this fork. The exception is a
+copy upstream's winget package manages: `winget upgrade` still tracks that
+`AppId` against upstream's manifest and will put upstream's build back.
+
+**The update key.** WinSparkle refuses an installer not signed by the key whose
+public half is in `Runner.rc`. Upstream's private key is theirs, so the fork has
+its own Ed25519 pair, unrelated to the APK keystore:
+
+| | |
+| --- | --- |
+| Private key | `~/.keystores/plezy-windows-ed25519.pem`, and the repo secret `WINSPARKLE_PRIVATE_KEY` |
+| Public key | `~/.keystores/plezy-windows-ed25519.pub.txt`, and `windows/runner/Runner.rc` |
+
+Back it up with the keystore. Losing it strands every Windows install on its
+current version until the user reinstalls by hand.
+
+The installer is not code-signed, so Windows SmartScreen shows "unknown
+publisher" on a manual install (More info → Run anyway).
+
 ## Both targets write to the same path
 
 `flutter build apk` always produces
@@ -772,13 +871,14 @@ lib/selfupdate/self_update_button.dart          # the progress-reporting primary
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
 test/selfupdate/self_update_button_test.dart
+.github/workflows/fork-windows.yml              # Windows installer + appcast
 QUEST_BUILD.md                                  # this file
 .questenv                                       # toolchain environment
 ```
 
 ## Upstream files this fork modifies
 
-Six files, and this list is the conflict surface for every upstream sync — step
+Seven files, and this list is the conflict surface for every upstream sync — step
 2 of [Shipping an upstream update](#shipping-an-upstream-update) is just asking
 whether upstream touched any of them. The Gradle changes are insertions guarded
 by `System.getenv("QUEST")`, so the default Play build stays byte-identical to
@@ -796,6 +896,8 @@ upstream.
 - `lib/utils/update_dialog.dart` — sideload builds swap in
   `SelfUpdateActionButton`; upstream's button is untouched on the `else`
 - `README.md` — the GPLv3 §5a "modified version" notice
+- `windows/runner/Runner.rc` — the fork's WinSparkle public key in place of
+  upstream's (see [Windows build](#windows-build))
 
 `tv_browse_rail.dart` and the `AMAZON` `abiFilters.clear()` change upstream
 *behaviour*; the rest either add new code paths or preserve upstream defaults
