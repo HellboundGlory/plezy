@@ -1,0 +1,252 @@
+name: Fork Windows release
+run-name: Windows ${{ inputs.tag }}
+
+# Builds the Windows installer for an existing fork release, attaches it to that
+# release and points the fork's WinSparkle appcast at it. Adapted from the
+# build-windows and package-windows jobs in build.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, e.g. v2.24.0.1
+        required: true
+        type: string
+      build_number:
+        description: Build number the APKs of this release used, e.g. 156
+        required: true
+        type: string
+
+# The appcast is force-pushed; two runs at once could leave the older one live.
+concurrency:
+  group: fork-windows-release
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.47.1"
+  # Public half of WINSPARKLE_PRIVATE_KEY. A build whose Runner.rc carries any
+  # other key could never accept the fork's later updates.
+  WINSPARKLE_PUBLIC_KEY: t7cw3pJeR+9PpuwFlU+VEmprgmbM5IHA4rbe90i8wbM=
+  APPCAST_URL: https://raw.githubusercontent.com/${{ github.repository }}/appcast/appcast.xml
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build_name: ${{ steps.v.outputs.build_name }}
+    steps:
+      # Flutter's Windows build only parses x.y.z, so a four-part fork version
+      # would fall back to 1.0.0+0. The build number carries the fork revision
+      # instead: WinSparkle compares it, not the version string.
+      - id: v
+        env:
+          TAG: ${{ inputs.tag }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Bad tag '$TAG' or build number '$BUILD_NUMBER'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_name=$(cut -d. -f1-3 <<< "$VERSION")" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    name: Build Windows (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            flutter_setup: action
+          - arch: arm64
+            runner: windows-11-arm
+            flutter_setup: git
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Check the WinSparkle key
+        shell: pwsh
+        run: |
+          if (-not (Select-String -Path windows/runner/Runner.rc -SimpleMatch -Quiet "EdDSAPub EDDSA {`"$env:WINSPARKLE_PUBLIC_KEY`"}")) {
+            throw "windows/runner/Runner.rc at ${{ inputs.tag }} does not carry the fork's WinSparkle public key"
+          }
+
+      - name: Setup Flutter
+        if: matrix.flutter_setup == 'action'
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Flutter from its pinned commit
+        if: matrix.flutter_setup == 'git'
+        uses: ./.github/actions/setup-flutter-git
+
+      - name: Install dependencies
+        shell: pwsh
+        run: flutter pub get --enforce-lockfile --no-example
+
+      - name: Install patched Flutter engine (DComp)
+        shell: pwsh
+        run: |
+          flutter precache --windows
+          .\windows\tool\install-patched-engine.ps1
+
+      - name: Build Windows ${{ matrix.arch }}
+        shell: pwsh
+        run: >
+          flutter build windows --release
+          --build-name=${{ needs.version.outputs.build_name }}
+          --build-number=${{ inputs.build_number }}
+          --dart-define=ENABLE_UPDATE_CHECK=true
+          --dart-define=UPDATE_GITHUB_REPO=${{ github.repository }}
+          --dart-define=UPDATE_APPCAST_URL=${{ env.APPCAST_URL }}
+          --dart-define=GIT_COMMIT=$(git rev-parse HEAD)
+
+      - name: Check the bundle
+        shell: pwsh
+        run: |
+          $bundle = "build/windows/${{ matrix.arch }}/runner/Release"
+          $required = @(
+            "plezy.exe", "flutter_windows.dll", "sqlite3.dll", "libmpv-2.dll",
+            "data/app.so", "data/icudtl.dat", "data/flutter_assets/NativeAssetsManifest.json",
+            "msvcp140.dll", "vcruntime140.dll"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath (Join-Path $bundle $file))) { throw "Missing $file" }
+          }
+          $stray = @(Get-ChildItem -LiteralPath $bundle -Recurse -File -Include *.pdb, *.lib, *.exp)
+          if ($stray.Count -gt 0) { throw "Link by-products in the bundle: $($stray.Name -join ', ')" }
+          $v = (Get-Item (Join-Path $bundle "plezy.exe")).VersionInfo
+          $expected = "${{ needs.version.outputs.build_name }}.${{ inputs.build_number }}"
+          if ("$($v.FileMajorPart).$($v.FileMinorPart).$($v.FileBuildPart).$($v.FilePrivatePart)" -ne $expected) {
+            throw "plezy.exe file version is not $expected"
+          }
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-${{ matrix.arch }}-build
+          path: build/windows/${{ matrix.arch }}/runner/Release/
+
+  package:
+    needs: [version, build]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        shell: pwsh
+        run: flutter pub get --enforce-lockfile --no-example
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-x64-build
+          path: build-x64
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-arm64-build
+          path: build-arm64
+
+      # The installer's elevation message links upstream's releases; following it
+      # would put an upstream build, and upstream's update feed, back in place.
+      - name: Point the installer's download link at this fork
+        shell: pwsh
+        run: |
+          $script = "windows/build-installer.ps1"
+          $text = Get-Content -Raw $script
+          $patched = $text.Replace("https://github.com/edde746/plezy/releases/latest", "https://github.com/${{ github.repository }}/releases/latest")
+          if ($patched -eq $text) { throw "Upstream release link not found in $script" }
+          Set-Content -Path $script -Value $patched -NoNewline
+
+      # Also writes two portable .7z archives, which are not published.
+      - name: Build installer
+        run: .\windows\build-installer.ps1 -X64BuildDir "build-x64" -Arm64BuildDir "build-arm64" -Version "${{ needs.version.outputs.version }}"
+
+      - name: Sign installer for WinSparkle (EdDSA)
+        env:
+          WINSPARKLE_PRIVATE_KEY: ${{ secrets.WINSPARKLE_PRIVATE_KEY }}
+        shell: pwsh
+        run: |
+          if (-not $env:WINSPARKLE_PRIVATE_KEY) { throw "WINSPARKLE_PRIVATE_KEY secret is not set" }
+          $keyPath = Join-Path $env:RUNNER_TEMP "winsparkle-ed25519.pem"
+          try {
+            Set-Content -Path $keyPath -Value $env:WINSPARKLE_PRIVATE_KEY -Encoding ascii -NoNewline
+            $output = & dart run auto_updater:sign_update plezy-windows-installer.exe $keyPath
+            if ($LASTEXITCODE -ne 0) { throw "WinSparkle signer failed with exit code $LASTEXITCODE" }
+            $match = [regex]::Match($output, 'edSignature="([^"]*)"')
+            if (-not $match.Success) { throw "WinSparkle signer returned no EdDSA signature" }
+            Set-Content -Path win-ed-signature.txt -Value $match.Groups[1].Value -Encoding ascii -NoNewline
+          } finally {
+            Remove-Item -Path $keyPath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Attach installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release upload "${{ inputs.tag }}" plezy-windows-installer.exe --clobber --repo "${{ github.repository }}"
+
+      - name: Publish appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          SIG=$(cat win-ed-signature.txt)
+          SIZE=$(stat -c %s plezy-windows-installer.exe)
+          RELEASE_URL="https://github.com/$REPO/releases/tag/$TAG"
+          cat > appcast.xml <<XMLEOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Plezy Updates</title>
+              <item>
+                <title>Version ${VERSION}</title>
+                <sparkle:version>${BUILD_NUMBER}</sparkle:version>
+                <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                <description><![CDATA[<p>Plezy ${VERSION}. <a href="${RELEASE_URL}">Release notes</a></p>]]></description>
+                <enclosure url="https://github.com/${REPO}/releases/download/${TAG}/plezy-windows-installer.exe"
+                           length="${SIZE}" type="application/octet-stream"
+                           sparkle:edSignature="${SIG}"
+                           sparkle:installerArguments="/SILENT /SP-"
+                           sparkle:os="windows" />
+              </item>
+            </channel>
+          </rss>
+          XMLEOF
+          cat appcast.xml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BLOB=$(git hash-object -w appcast.xml)
+          TREE=$(printf "100644 blob %s\tappcast.xml\n" "$BLOB" | git mktree)
+          COMMIT=$(git commit-tree "$TREE" -m "Update appcast for $TAG")
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$COMMIT:refs/heads/appcast" --force
