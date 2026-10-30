@@ -218,6 +218,14 @@ gh release create v$VER \
   --notes "Rebased on upstream 2.18.0. <upstream highlights from step 1>"
 ```
 
+**Upstream's `Update Packages` workflow is disabled on this repository**
+(Actions → Update Packages → Disable, done once). It fires on every published
+release and exists to bump upstream's Homebrew cask, publish upstream's winget
+manifest and republish upstream's appcast. Each of those is wrong in a fork:
+the cask step commits to the repository's default branch — `quest` here — and
+the winget step would publish this fork's installer under upstream's
+identifier. Leave it disabled; a sync does not turn it back on.
+
 ### 7b. Build and attach the Windows installer
 
 Once the release exists, run the **Fork Windows release** workflow on GitHub
