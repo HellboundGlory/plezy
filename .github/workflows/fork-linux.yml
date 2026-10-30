@@ -128,8 +128,9 @@ jobs:
         shell: bash
         run: flutter pub get --enforce-lockfile --no-example
 
-      # The four-part build name lands in data/flutter_assets/version.json,
-      # which the in-app update check reads back against the release tag.
+      # The build name reaches the Dart side as a define, but not the bundle
+      # metadata: the Linux build re-enters flutter through CMake, and that
+      # environment carries no build name or number.
       - name: Build Linux ${{ matrix.arch }}
         shell: bash
         run: >
@@ -155,6 +156,21 @@ jobs:
             exit 1
           fi
           echo "BUNDLE_DIR=$bundle_dir" >> "$GITHUB_ENV"
+
+      # package_info_plus reads version.json on Linux and the update check
+      # compares that against the release tag, so a bundle left reporting
+      # pubspec's version would offer this same release forever.
+      - name: Stamp the release version into the bundle
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+        run: |
+          json="$BUNDLE_DIR/data/flutter_assets/version.json"
+          jq --arg version "$VERSION" --arg build "$BUILD_NUMBER" \
+            '.version = $version | .build_number = $build' "$json" > "$json.tmp"
+          mv "$json.tmp" "$json"
+          cat "$json"
 
       # libmpv travels with the bundle, so bundle-libs.sh has to supply what it
       # links before packaging reads the tree.
