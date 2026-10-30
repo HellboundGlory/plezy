@@ -395,6 +395,13 @@ Flatpak path.
 - **Numbering:** upstream's `2.25.0+157` clears the `156` that 2.24.0.1
   shipped, so the release is build `158`.
 - **Verification:** 29 fork tests pass (10.7 s), plus the by-eye checks above.
+- **The Flatpak path was dry-run before the release.** Dispatching
+  `fork-linux.yml` against `quest` built both bundles and passed every
+  packaging check, then failed on the version assertion: `version.json` said
+  `2.25.0` / `157` although `--build-name` and `--build-number` were passed,
+  because the Linux build re-enters Flutter through CMake without them in its
+  environment. The workflow stamps the file now, and the second dry run is what
+  the release shipped.
 - **Artifacts:** `plezy-quest-2.25.0.1-arm64.apk` (97.7 MB, versionCode 4158,
   `arm64-v8a`) and `plezy-firetv-2.25.0.1.apk` (176.9 MB, versionCode 3158,
   `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.24.0.1. The
@@ -729,12 +736,14 @@ the bundle's embedded metadata names `2.25.0` rather than `2.25.0.1`, because
 `build-flatpak.py` reads the version from `pubspec.yaml` and its parser rejects
 a fourth component.
 
-**The fork's version reaches the app through the build flags.** Flutter's Linux
-build copies `--build-name` and `--build-number` verbatim into
-`data/flutter_assets/version.json`, which is what `package_info_plus` reads on
-Linux, so a bundle built without them would report upstream's version and offer
-the same release forever. The workflow asserts the installed bundle's
-`version.json` carries the release version before it uploads anything.
+**The fork's version reaches the app through the bundle metadata.** A Linux
+build re-enters Flutter through CMake, and that environment carries neither
+`--build-name` nor `--build-number`, so `data/flutter_assets/version.json` keeps
+whatever `pubspec.yaml` says. That file is what `package_info_plus` reports on
+Linux and therefore what the update check compares against the release tag, so
+the workflow writes the release version and build number into it before
+packaging, and asserts the installed bundle reports them. Without the stamp a
+2.25.0.1 bundle would call itself 2.25.0 and offer its own release forever.
 
 **Updating.** There is no self-installer on Linux: the update dialog's primary
 button opens the release page, and the newer bundle is installed over the old
