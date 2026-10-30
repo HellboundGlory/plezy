@@ -1,0 +1,246 @@
+name: Fork Linux release
+run-name: Linux ${{ inputs.tag }}
+
+# Builds Flatpak bundles for an existing fork release and attaches them to it.
+# Adapted from the build-linux job in build.yml, which cannot run here: its
+# validate-trusted-ref job only accepts refs/heads/main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Fork release tag, e.g. v2.25.0.1
+        required: true
+        type: string
+      build_number:
+        description: Build number the APKs of this release used, e.g. 158
+        required: true
+        type: string
+
+# Two runs at once would race for the same release assets.
+concurrency:
+  group: fork-linux-release
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.47.1"
+  CACHE_VERSION: fork-linux-v1
+  LINUX_APT_PACKAGES: >
+    clang cmake meson ninja-build pkg-config nasm libgtk-3-dev libevdev-dev liblzma-dev
+    libstdc++-12-dev libasound2-dev libass-dev libfreetype-dev libfontconfig-dev libfribidi-dev
+    libharfbuzz-dev libepoxy-dev libegl-dev libgl-dev libgnutls28-dev libpipewire-0.3-dev
+    libva-dev libvdpau-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
+    libxss-dev libxpresent-dev libxkbcommon-dev libpulse-dev libdbus-1-dev libdrm-dev
+    libdisplay-info-dev libgbm-dev libwayland-dev wayland-protocols liblcms2-dev libmujs-dev liblua5.2-dev
+    build-essential imagemagick libcurl4-openssl-dev zstd
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build_number: ${{ steps.v.outputs.build_number }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Bad tag '$TAG' or build number '$BUILD_NUMBER'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    name: Build Linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            flutter_channel: stable
+            pkg_config_arch: x86_64-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            flutter_channel: master
+            pkg_config_arch: aarch64-linux-gnu
+    steps:
+      # No ref input: this has to run against the branch before the tag exists.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: ${{ matrix.flutter_channel }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          pub-cache: false
+
+      - name: Cache Pub dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.pub-cache
+          key: ${{ env.CACHE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-pub-${{ hashFiles('pubspec.yaml', 'pubspec.lock') }}
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          read -r -a packages <<< "$LINUX_APT_PACKAGES"
+
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y -o Acquire::Retries=3 "${packages[@]}"; then
+              exit 0
+            fi
+
+            sudo apt-get clean
+            sudo rm -rf /var/lib/apt/lists/*
+            sleep $((attempt * 15))
+          done
+
+          exit 1
+
+      - name: Cache libmpv prefix
+        id: libmpv-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: libmpv-prefix
+          key: ${{ env.CACHE_VERSION }}-libmpv-${{ runner.arch }}-${{ hashFiles('mpv-build.lock.json') }}
+
+      - name: Fetch libmpv
+        if: steps.libmpv-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: python3 scripts/fetch_linux_libmpv.py --dest libmpv-prefix
+
+      - name: Install dependencies
+        shell: bash
+        run: flutter pub get --enforce-lockfile --no-example
+
+      # The four-part build name lands in data/flutter_assets/version.json,
+      # which the in-app update check reads back against the release tag.
+      - name: Build Linux ${{ matrix.arch }}
+        shell: bash
+        run: >
+          flutter build linux --release
+          --build-name=${{ needs.version.outputs.version }}
+          --build-number=${{ needs.version.outputs.build_number }}
+          --dart-define=ENABLE_UPDATE_CHECK=true
+          --dart-define=UPDATE_GITHUB_REPO=${{ github.repository }}
+          --dart-define=GIT_COMMIT=${{ github.sha }}
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/libmpv-prefix/lib/pkgconfig:${{ github.workspace }}/libmpv-prefix/lib/${{ matrix.pkg_config_arch }}/pkgconfig
+
+      - name: Resolve bundle directory
+        shell: bash
+        run: |
+          if [[ "${{ matrix.arch }}" == "x64" ]]; then
+            bundle_dir=build/linux/x64/release/bundle
+          else
+            bundle_dir=$(find build/linux -path "*/release/bundle" -type d | head -1)
+          fi
+          if [[ -z "$bundle_dir" || ! -d "$bundle_dir" ]]; then
+            echo "ERROR: Linux bundle directory not found" >&2
+            exit 1
+          fi
+          echo "BUNDLE_DIR=$bundle_dir" >> "$GITHUB_ENV"
+
+      # libmpv travels with the bundle, so bundle-libs.sh has to supply what it
+      # links before packaging reads the tree.
+      - name: Copy libmpv into bundle
+        shell: bash
+        run: |
+          BUNDLE_LIB="$BUNDLE_DIR/lib"
+          LIBMPV_DIR=$(dirname "$(find libmpv-prefix -name 'libmpv.so' | head -1)")
+          cp -a "$LIBMPV_DIR"/libmpv.so* "$BUNDLE_LIB/"
+          cp -a libmpv-prefix/lib/libshaderc_shared.so* "$BUNDLE_LIB/"
+
+      - name: Bundle shared libraries
+        shell: bash
+        run: bash linux/packaging/bundle-libs.sh "$BUNDLE_DIR"
+
+      - name: Copy wrapper script into bundle
+        shell: bash
+        run: cp linux/packaging/plezy.sh "$BUNDLE_DIR/plezy.sh"
+
+      - name: Verify every unbundled library the bundle needs is declared
+        shell: bash
+        run: python3 linux/packaging/check-bundle-host-deps.py "$BUNDLE_DIR"
+
+      - name: Install Flatpak packaging dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+
+      - name: Build Flatpak bundle
+        shell: bash
+        run: python3 linux/packaging/build-flatpak.py --bundle "$BUNDLE_DIR" --arch ${{ matrix.arch }} --output "$GITHUB_WORKSPACE"
+
+      - name: Verify installed Flatpak runtime dependencies
+        shell: bash
+        run: |
+          flatpak install --user --noninteractive "plezy-linux-${{ matrix.arch }}.flatpak"
+          dbus-run-session -- python3 linux/packaging/check-flatpak.py --arch ${{ matrix.arch }}
+
+      # Without this, a bundle built from a stale version string keeps telling
+      # its users this same release is the newest one available.
+      - name: Assert the bundle reports the release version
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          json=$(dbus-run-session -- flatpak run --command=cat com.edde746.plezy /app/plezy/data/flutter_assets/version.json)
+          if [[ "$json" != *"\"version\":\"$VERSION\""* ]]; then
+            echo "$json"
+            echo "version.json does not report $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Upload Linux ${{ matrix.arch }} bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-${{ matrix.arch }}
+          path: plezy-linux-${{ matrix.arch }}.flatpak
+
+  attach:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: linux-x64
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: linux-arm64
+          path: dist
+
+      # A validation run happens before the release exists, and has to finish
+      # green rather than fail on a missing release.
+      - name: Attach the bundles to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${{ inputs.tag }} does not exist yet; nothing to attach."
+            exit 0
+          fi
+          gh release upload "${{ inputs.tag }}" dist/plezy-linux-x64.flatpak dist/plezy-linux-arm64.flatpak --clobber --repo "${{ github.repository }}"
