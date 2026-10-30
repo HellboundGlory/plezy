@@ -235,6 +235,23 @@ rewrites `appcast.xml` on the fork's `appcast` branch. Installed Windows copies
 read that appcast and update in place. See
 [Windows build](#windows-build).
 
+### 7c. Build and attach the Linux Flatpaks
+
+Upstream's Linux packaging lives inside its release workflow, which refuses any
+ref but upstream's `main`, so the fork has its own. Dispatch it on the new tag
+with the same build number as the APKs:
+
+```bash
+gh workflow run fork-linux.yml --repo HellboundGlory/plezy --ref v$VER \
+  -f tag=v$VER -f build_number=$NUM
+```
+
+It builds x64 and arm64 bundles, checks each one's runtime dependencies and
+that it reports the release version, then attaches `plezy-linux-x64.flatpak`
+and `plezy-linux-arm64.flatpak` to the release. It also runs as a dry run
+before the release exists — dispatch it on `quest` and the bundles stay in the
+run's artifacts instead. See [Linux Flatpak](#linux-flatpak).
+
 ### 8. Confirm the update lands
 
 Installed builds poll on a 6-hour cooldown, so force it: **Settings → Check for
@@ -353,6 +370,36 @@ the first release with a Windows installer.
 - **Artifacts:** `plezy-quest-2.24.0.1-arm64.apk` (97 MB, versionCode 4156,
   `arm64-v8a`) and `plezy-firetv-2.24.0.1.apk` (174 MB, versionCode 3156,
   `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.23.0.1.
+
+### The sync that produced 2.25.0.1
+
+Recorded because it is the first release that also ships Linux. The examples
+above already cover the numbering and the by-eye checks; this one adds the
+Flatpak path.
+
+- **Upstream:** 39 commits, `2.24.0` → `2.25.0`, synced to the tag. For these
+  targets: Android mpv gained loudness normalisation (a compressor and limiter
+  in the audio filter graph), `plezy://` links now switch Plex Home profiles
+  and play titles on every platform, Android wakes the device when such a link
+  arrives during the screensaver, Android reports only failed or visible exits
+  grouped by reason, audio sync moves in 10 ms steps, and the player picks
+  intro and credits chapters with an on-device classifier.
+- **Conflict prediction printed two files and the rebase was still clean.**
+  `lib/widgets/tv_browse_rail.dart` (upstream reworked the follow-focus path
+  behind `_displacedFocusItem`) and `README.md`. All 19 fork commits replayed
+  without a conflict, because upstream's edits and the fork's `Listener` sat in
+  different hunks. The by-eye check passed: the `Listener`, the
+  `fromEnvironment` values, `SelfUpdateActionButton`, both `abiFilters.clear()`
+  hits, both `include()` lines and the WinSparkle key in `Runner.rc` were all
+  present.
+- **Numbering:** upstream's `2.25.0+157` clears the `156` that 2.24.0.1
+  shipped, so the release is build `158`.
+- **Verification:** 29 fork tests pass (10.7 s), plus the by-eye checks above.
+- **Artifacts:** `plezy-quest-2.25.0.1-arm64.apk` (97.7 MB, versionCode 4158,
+  `arm64-v8a`) and `plezy-firetv-2.25.0.1.apk` (176.9 MB, versionCode 3158,
+  `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.24.0.1. The
+  Windows installer and the Linux Flatpaks are built from the tag afterwards by
+  their own workflows — steps 7b and 7c.
 
 ## Toolchain
 
@@ -664,6 +711,56 @@ current version until the user reinstalls by hand.
 The installer is not code-signed, so Windows SmartScreen shows "unknown
 publisher" on a manual install (More info → Run anyway).
 
+## Linux Flatpak
+
+Flatpak bundles for x64 and arm64, built from the fork's tag and attached to
+each release. This is upstream's Linux build and upstream's packaging scripts,
+unmodified: the fork has no Linux code of its own, so the bundle differs from
+upstream's only in its version, its release channel and where its update check
+points.
+
+**The app id stays `com.edde746.plezy`.** Flatpak keys the install, the desktop
+integration and `~/.var/app/com.edde746.plezy` on the id, so the fork's bundle
+replaces an upstream Flatpak in place and keeps that copy's settings — the same
+choice the Windows installer makes with upstream's Inno Setup `AppId`. Keeping
+the id is also what lets the fork build upstream's packaging files untouched.
+Two consequences worth knowing: a machine cannot hold both builds at once, and
+the bundle's embedded metadata names `2.25.0` rather than `2.25.0.1`, because
+`build-flatpak.py` reads the version from `pubspec.yaml` and its parser rejects
+a fourth component.
+
+**The fork's version reaches the app through the build flags.** Flutter's Linux
+build copies `--build-name` and `--build-number` verbatim into
+`data/flutter_assets/version.json`, which is what `package_info_plus` reads on
+Linux, so a bundle built without them would report upstream's version and offer
+the same release forever. The workflow asserts the installed bundle's
+`version.json` carries the release version before it uploads anything.
+
+**Updating.** There is no self-installer on Linux: the update dialog's primary
+button opens the release page, and the newer bundle is installed over the old
+one. Same id and architecture make that an in-place upgrade that keeps the
+settings.
+
+```bash
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.freedesktop.Platform//25.08
+flatpak install --user ./plezy-linux-x64.flatpak
+```
+
+The build passes `--dart-define=UPDATE_GITHUB_REPO=HellboundGlory/plezy`, so the
+check reads the fork's releases rather than upstream's.
+
+**Omitted, as in the Windows build:** Sentry, the donation prompt and the
+Supporter unlock — plus the deb, rpm, pacman and tarball packaging and the
+build attestations that upstream's release workflow also produces.
+
+**Checked in CI**, all through upstream's own scripts: `bundle-libs.sh` and
+`check-bundle-host-deps.py` prove the bundled tree is complete,
+`check-flatpak.py` checks the installed bundle against the runtime rather than
+the build SDK, and the `version.json` assertion guards the update check. None
+of it replaces launching the app on a Wayland desktop, which is still a manual
+check.
+
 ## Both targets write to the same path
 
 `flutter build apk` always produces
@@ -871,6 +968,7 @@ lib/selfupdate/self_update_button.dart          # the progress-reporting primary
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
 test/selfupdate/self_update_button_test.dart
+.github/workflows/fork-linux.yml                # Linux Flatpak bundles
 .github/workflows/fork-windows.yml              # Windows installer + appcast
 QUEST_BUILD.md                                  # this file
 .questenv                                       # toolchain environment
