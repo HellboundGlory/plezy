@@ -416,6 +416,30 @@ Flatpak path.
   Windows installer and the Linux Flatpaks are built from the tag afterwards by
   their own workflows — steps 7b and 7c.
 
+### The sync that produced 2.26.0.1
+
+Recorded because upstream added a trademark policy that applies to this fork.
+
+- **Upstream:** 63 commits, `2.25.0` → `2.26.0`, synced to the tag. For these
+  targets: zoom is remembered per show, library or everywhere; D-pad
+  hold-select triggers long-press on list tiles; mpv subtitles line up with the
+  picture on Amlogic and MediaTek boxes; Dolby Vision letterbox bars stay black
+  on Amlogic; Android phones without Vulkan 1.1 use Skia; libraries gained
+  shuffle and a Genres tab. Upstream also started shipping a Linux AppImage,
+  which the fork's `fork-linux.yml` does not build.
+- **`TRADEMARKS.md` arrived with this release.** The release waited for the
+  maintainer's written permission; see [Licensing note](#licensing-note).
+- **Conflict prediction printed three files and the rebase was clean:**
+  `android/app/build.gradle.kts`, `lib/widgets/tv_browse_rail.dart` and
+  `README.md`. All 28 fork commits replayed without a conflict, and the by-eye
+  checks passed.
+- **Numbering:** upstream's `2.26.0+160` is above the `158` 2.25.0.1 shipped,
+  so the release is build `161`.
+- **Verification:** 29 fork tests pass (11.2 s), plus the by-eye checks.
+- **Artifacts:** `plezy-quest-2.26.0.1-arm64.apk` (101.7 MB, versionCode 4161,
+  `arm64-v8a`) and `plezy-firetv-2.26.0.1.apk` (181.6 MB, versionCode 3161,
+  `arm64-v8a armeabi-v7a`), both signed `f54a…640b`, matching 2.25.0.1.
+
 ## Toolchain
 
 The versions the build pins (`android/app/build.gradle.kts`):
@@ -669,6 +693,16 @@ preserved. Publishing the APKs from this public fork satisfies that, since the
 source that built them is the repo they are attached to. The README carries the
 "modified version" notice GPLv3 §5a requires. Do not publish builds from a
 private repo without also making that source available to recipients.
+
+The GPL covers the code, not the name. Upstream's `TRADEMARKS.md` (from 2.26.0)
+requires a fork distributed beyond personal use to rebrand: its own name, icons,
+URL scheme and service registrations. The maintainer gave this fork written
+permission to keep the Plezy name, icons, `com.edde746.plezy`, `plezy://` and
+the project's services
+([edde746/plezy#3037](https://github.com/edde746/plezy/issues/3037)), on two
+conditions: builds go out only as GitHub releases, and the README says the fork
+is unofficial. **That does not cover any app store, Flathub included.**
+Publishing to one needs the full rebrand first.
 
 ## Windows build
 
