@@ -595,7 +595,7 @@ So on a sideload build the primary action is
 Three things about it are load-bearing rather than cosmetic:
 
 - **It is a separate widget, not a branch inside upstream's button.** The `if
-  (ApkSelfUpdater.isSupported)` in `lib/utils/update_dialog.dart` has upstream's
+  (SelfUpdater.isSupported)` in `lib/utils/update_dialog.dart` has upstream's
   original `DialogActionButton` on its `else`, unchanged apart from the extra
   indentation, so the Play and desktop builds keep running upstream's code.
 - **`onPressed` stays non-null while the download runs.** `FocusableButton`
@@ -794,10 +794,19 @@ the workflow writes the release version and build number into it before
 packaging, and asserts the installed bundle reports them. Without the stamp a
 2.25.0.1 bundle would call itself 2.25.0 and offer its own release forever.
 
-**Updating.** There is no self-installer on Linux: the update dialog's primary
-button opens the release page, and the newer bundle is installed over the old
-one. Same id and architecture make that an in-place upgrade that keeps the
-settings.
+**Updating.** Builds released after 2.26.0.1 update themselves
+like the APKs do. The dialog's "Download & Install" downloads
+`plezy-linux-<arch>.flatpak` from the latest release. It installs that bundle
+through `flatpak-spawn --host flatpak install` into the same installation
+(`--user` or `--system`). It then starts a host helper that waits for the app to
+leave `flatpak ps` and runs it again, and quits. That needs the
+`--talk-name=org.freedesktop.Flatpak` permission, which lets the app run host
+commands. `fork-linux.yml` adds it to the manifest in the runner's checkout
+only, so upstream's manifest stays untouched, and the job fails if the built
+bundle lacks it. Any failure falls back to opening the release page. A copy
+built before this (2.26.0.1 and older) is updated by hand once: install the
+newer bundle over it. Same id and architecture make that an in-place upgrade
+that keeps the settings.
 
 ```bash
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -1021,10 +1030,11 @@ android/selfupdate/build.gradle.kts             # code-free permission module
 android/selfupdate/src/main/AndroidManifest.xml # REQUEST_INSTALL_PACKAGES
 lib/quest/quest_platform.dart                   # Quest/Horizon device detection
 lib/selfupdate/self_update_target.dart          # target + release-asset selection
-lib/selfupdate/apk_self_updater.dart            # download + hand to the installer
+lib/selfupdate/self_updater.dart                # download + install (APK or Flatpak)
 lib/selfupdate/self_update_button.dart          # the progress-reporting primary button
 test/quest/quest_platform_test.dart
 test/selfupdate/self_update_target_test.dart
+test/selfupdate/self_updater_flatpak_test.dart
 test/selfupdate/self_update_button_test.dart
 .github/workflows/fork-linux.yml                # Linux Flatpak bundles
 .github/workflows/fork-windows.yml              # Windows installer + appcast
