@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Plezy Updates</title>
+    <item>
+      <title>Version 2.26.0.1</title>
+      <sparkle:version>161</sparkle:version>
+      <sparkle:shortVersionString>2.26.0.1</sparkle:shortVersionString>
+      <description><![CDATA[<p>Plezy 2.26.0.1. <a href="https://github.com/HellboundGlory/plezy/releases/tag/v2.26.0.1">Release notes</a></p>]]></description>
+      <enclosure url="https://github.com/HellboundGlory/plezy/releases/download/v2.26.0.1/plezy-windows-installer.exe"
+                 length="109385212" type="application/octet-stream"
+                 sparkle:edSignature="9P+KHkDeXogtNX62oGk7XfXyZgz9LtCQX3IXToqwyWsfCthG6hf5B28HsW6ToEEHRFtU/uQ5EjVGDg5ibHdaAg=="
+                 sparkle:installerArguments="/SILENT /SP-"
+                 sparkle:os="windows" />
+    </item>
+  </channel>
+</rss>
