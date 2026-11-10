@@ -13,3 +13,5 @@ ac4fa58b0..8a2b6ac64  simplify: 0 found  code-review: 0 found  skipped: skills, 
 01c19ea6a..b753a5d5e  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only note in the fork's README block
 d8a76fc77..d7a579e00  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook notes checked against the issue reply and the build output
 2c410b79c..b4210fe4c  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook note checked against the workflow list
+b14abf69a..87d9be7a1  worker: none (command-code, own review skipped)  final adversarial-code-reviewer: 4 found / 4 fixed  simplify: 1 change  skipped: spec-review, single job checked against its spec; manual end-to-end update confirmed by the user
+87d9be7a1..e8f2eada0  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook update
