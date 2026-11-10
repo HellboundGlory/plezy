@@ -7,6 +7,11 @@
 > <https://github.com/edde746/plezy>; report issues with *this* fork here, not
 > upstream.
 >
+> Everything in the Download section below (store badges, download links and
+> package managers) is the official Plezy app, not this fork. This fork's
+> builds are only on its
+> [GitHub Releases](https://github.com/HellboundGlory/plezy/releases) page.
+>
 > Plezy is licensed under the GNU General Public License v3.0, and so is this
 > fork. See [LICENSE](LICENSE), and [QUEST_BUILD.md](QUEST_BUILD.md) for what
 > was changed and how to build it.
