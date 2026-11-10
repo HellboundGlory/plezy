@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../i18n/strings.g.dart';
-import '../selfupdate/apk_self_updater.dart';
+import '../selfupdate/self_updater.dart';
 import '../selfupdate/self_update_button.dart';
 import '../services/update_service.dart';
 import '../widgets/dialog_action_button.dart';
@@ -51,7 +51,7 @@ Future<void> showUpdateAvailableDialog(
           // Sideloaded Quest/Fire TV builds install the APK in place, and say so
           // on the button while they do it. Every other build keeps upstream's
           // open-the-release-page behaviour, unchanged, on the else branch.
-          if (ApkSelfUpdater.isSupported)
+          if (SelfUpdater.isSupported)
             SelfUpdateActionButton(
               repo: UpdateService.githubRepo,
               releaseUrl: releaseUrl,

@@ -140,6 +140,7 @@ jobs:
           --dart-define=ENABLE_UPDATE_CHECK=true
           --dart-define=UPDATE_GITHUB_REPO=${{ github.repository }}
           --dart-define=GIT_COMMIT=${{ github.sha }}
+          --dart-define=SELF_UPDATE_TARGET=flatpak
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/libmpv-prefix/lib/pkgconfig:${{ github.workspace }}/libmpv-prefix/lib/${{ matrix.pkg_config_arch }}/pkgconfig
 
@@ -202,6 +203,15 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
 
+      # The app installs its own updates through the host's flatpak command,
+      # which the sandbox hands out only through this talk-name.
+      - name: Allow the bundle to run host flatpak commands
+        shell: bash
+        run: |
+          manifest=linux/packaging/flatpak/com.edde746.plezy.json
+          jq '."finish-args" += ["--talk-name=org.freedesktop.Flatpak"]' "$manifest" > "$manifest.tmp"
+          mv "$manifest.tmp" "$manifest"
+
       - name: Build Flatpak bundle
         shell: bash
         run: python3 linux/packaging/build-flatpak.py --bundle "$BUNDLE_DIR" --arch ${{ matrix.arch }} --output "$GITHUB_WORKSPACE"
@@ -211,6 +221,18 @@ jobs:
         run: |
           flatpak install --user --noninteractive "plezy-linux-${{ matrix.arch }}.flatpak"
           dbus-run-session -- python3 linux/packaging/check-flatpak.py --arch ${{ matrix.arch }}
+
+      # A self-update needs the permission baked into the bundle, not just into
+      # the manifest this run edited.
+      - name: Verify the bundle can reach the host flatpak command
+        shell: bash
+        run: |
+          permissions=$(flatpak info --show-permissions com.edde746.plezy)
+          if ! grep -qx 'org.freedesktop.Flatpak=talk' <<< "$permissions"; then
+            echo "$permissions" >&2
+            echo "Bundle has no org.freedesktop.Flatpak talk-name; it cannot install its own updates" >&2
+            exit 1
+          fi
 
       # Without this, a bundle built from a stale version string keeps telling
       # its users this same release is the newest one available.

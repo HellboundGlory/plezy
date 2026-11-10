@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plezy/selfupdate/apk_self_updater.dart';
+import 'package:plezy/selfupdate/self_updater.dart';
 import 'package:plezy/selfupdate/self_update_button.dart';
 
 void main() {
@@ -31,14 +31,23 @@ void main() {
       expect(selfUpdateButtonLabel(SelfUpdatePhase.launchingInstaller, 1), 'Opening installer…');
     });
 
+    test('says installing rather than opening an installer on the Flatpak build', () {
+      expect(selfUpdateButtonLabel(SelfUpdatePhase.launchingInstaller, 1, flatpak: true), 'Installing…');
+    });
+
+    test('says restarting while the new build comes back', () {
+      expect(selfUpdateButtonLabel(SelfUpdatePhase.restarting, null), 'Restarting…');
+    });
+
     test('every phase says something different', () {
       final labels = {
         selfUpdateButtonLabel(null, null),
         selfUpdateButtonLabel(SelfUpdatePhase.resolving, null),
         selfUpdateButtonLabel(SelfUpdatePhase.downloading, 0.5),
         selfUpdateButtonLabel(SelfUpdatePhase.launchingInstaller, null),
+        selfUpdateButtonLabel(SelfUpdatePhase.restarting, null),
       };
-      expect(labels, hasLength(4));
+      expect(labels, hasLength(5));
     });
   });
 
