@@ -226,6 +226,13 @@ the cask step commits to the repository's default branch — `quest` here — an
 the winget step would publish this fork's installer under upstream's
 identifier. Leave it disabled; a sync does not turn it back on.
 
+**`CI - Sanity Checks` is disabled too** (2026-11-10). It runs on every push to
+`main`, which here is only ever a copy of upstream that upstream's own CI has
+already checked; the fork's tests run locally in step 3. GitHub may also switch
+off all workflows on the fork by itself, after which a dispatch fails with
+`HTTP 422: Actions has been disabled for this repository`. Re-enable them on
+the repository's Actions page; the two workflows disabled by hand stay off.
+
 ### 7b. Build and attach the Windows installer
 
 Once the release exists, run the **Fork Windows release** workflow on GitHub
