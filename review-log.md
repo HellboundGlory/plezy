@@ -12,3 +12,4 @@ b063e786a..20106ca1b  simplify: 0 found  code-review: 0 found  skipped: skills, 
 ac4fa58b0..8a2b6ac64  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only note about upstream's disabled package workflow
 01c19ea6a..b753a5d5e  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only note in the fork's README block
 d8a76fc77..d7a579e00  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook notes checked against the issue reply and the build output
+2c410b79c..b4210fe4c  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook note checked against the workflow list
