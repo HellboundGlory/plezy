@@ -11,3 +11,4 @@ ad1ca0e28..b063e786a  simplify: 0 found  code-review: 1 found / 1 fixed  skipped
 b063e786a..20106ca1b  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only range correcting the version-stamp description
 ac4fa58b0..8a2b6ac64  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only note about upstream's disabled package workflow
 01c19ea6a..b753a5d5e  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only note in the fork's README block
+d8a76fc77..d7a579e00  simplify: 0 found  code-review: 0 found  skipped: skills, prose-only runbook notes checked against the issue reply and the build output
